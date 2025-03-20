@@ -1,4 +1,29 @@
 body {
-    margin-left: 0.5in;
-    margin-right: 0.5in;
+    font-family: "IBM Plex Serif", Georgia, 'Times New Roman', Times, serif;
+    font-weight: 400;
+    padding: 20px;
+    margin-left: 1in;
+    margin-right: 1in;
+
+    /* maybe you could print my website to a printer? */
+    max-width: 8in;
+}
+
+/* below styles taken from brian timar's website */
+a {
+    color: #0066cc;
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+blockquote {
+    font-style: italic;
+    color: #7a7a7a;
+}
+
+.footnote {
+    font-size: small;
 }
