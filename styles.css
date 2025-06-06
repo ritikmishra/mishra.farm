@@ -27,3 +27,8 @@ blockquote {
 .footnote {
     font-size: small;
 }
+
+figcaption {
+    font-style: oblique;
+    font-size: 0.9em;
+}
