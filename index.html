@@ -50,11 +50,12 @@
         <li><a href="https://monkeytype.com/profile/ritikmishra">monkeytype</a></li>
         <li><a href="https://open.spotify.com/user/cakbrekbt07vlda0w5gjhh7cj?si=e99760e840df4180">spotify</a></li>
         <li><a href="https://www.admonymous.co/cheese_mishra">admonymous</a></li>
-	<li><a href="https://www.strava.com/athletes/43773039">strava</a></li>
+        <li><a href="https://www.strava.com/athletes/43773039">strava</a></li>
     </ul>
 
     <h2>close friends of mine who also have webbed sites</h2>
-    <ul>
+    <em>if we're close and you made a website, tell me so i can add you :)</em>
+    <ul id="friends">
         <li><a href="https://owenbrake.com">owen brake</a></li>
         <li><a href="https://hyperturing.com">lachlan sneff</a></li>
         <li><a href="https://substack.com/@shy0">sasha hydrie</a></li>
@@ -66,11 +67,34 @@
         <li><a href="https://agniv.me/">agniv sarkar</a></li>
     </ul>
 
-    <h2>poasts</h2>
+    <h2>thoughts + writing</h2>
     <ul>
+        <li><a href="/posts/try.html">please try and please please please please don't give up</a></li>
         <li><a href="/posts/silly.html">silly things i did that i think are funny despite requiring low effort on my
                 part</a></li>
     </ul>
+
+
+    <script>
+        // Shuffle elements in a <ul> element [implementation thanks to claude]
+        function shuffleList(ulElement) {
+            // Get all li elements
+            const items = Array.from(ulElement.children);
+            
+            // Fisher-Yates shuffle algorithm
+            for (let i = items.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [items[i], items[j]] = [items[j], items[i]];
+            }
+            
+            // Clear the ul and append shuffled items
+            ulElement.innerHTML = '';
+            items.forEach(item => ulElement.appendChild(item));
+        }
+
+        // I love some of you more than others but the world doesn't need to know that ;)
+        shuffleList(document.getElementById("friends"));
+    </script>
 </body>
 
 </html>
