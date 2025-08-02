@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>mishra.farm -- caffeine</title>
+    <meta charset="UTF-8"> <!-- or else the emoji are broken -->
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;1,100;1,200;1,300;1,400;1,500;1,600;1,700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="/styles.css" />
+
+    <meta property="og:image" content="https://mishra.farm/images/try/if_only_you_knew_how_good_things_really_are.gif" />
+    <meta property="twitter:image" content="https://mishra.farm/images/try/if_only_you_knew_how_good_things_really_are.gif" />
+</head>
+
+<body>
+    <!-- I wrote the article to have one sentence per line in the source text so that its easier to review it in PR form. -->
+    <article class="page sans">
+        <header>
+            <h1 class="page-title">modelling pharmacokinetics with linear circuit elements</h1>
+            <p class="page-description"></p>
+        </header>
+        <div class="page-body">
+            <h1>motivation</h1>
+            <p>
+                In the course of life, I ended up daily driving 400-600mg of caffeine. 
+                Recently, I have reduced my daily consumption to something closer to 0-200mg. 
+                I've notirced differences in how caffeine affe8cts my body.
+            </p>
+
+            <p>
+                My restraint around caffeine (at times) has been a lot lower than most of my friends. 
+                Over the last few years, when I’m particularly stressed/demotivated by work, I would regularly daily-drive 400-600mg of caffeine. 
+                Broadly, I think this was probably bad for my sleep quality and relationship to work.
+            </p>
+            <p>
+                A few weeks ago, in the process of cutting back caffeine, I drank a Celsius energy drink (nominally containing 200mg of caffeine) by diluting it with 3 liters of water. 
+                This spread out the 200mg over the entire day, and at the end of the day, I felt more wired than I typically do.
+            </p>
+            <p>
+                To build some intuition around why this would happen, I would like to model the flow of caffeine through my body 
+                Specifically, I would like to do so using electronic circuit elements, because those are Well Understood, and doing so makes simulation (using LTSpice) quite straightforward.
+            </p>
+
+            <h1>modelling assumptions</h1>
+            <p>
+                The biggest assumption we're making is that the speed of caffeine absorption and metabolism is constant over time.
+                Pharmakokinetic research supports this assumption -- the mechanism of caffeine tolerance is in the brain, where the number of adenosine receptors will change.
+            </p>
+
+            <h1>how does caffeine flow through the body?</h1>
+            <p>
+                <ul>
+                    <li>I consume some liquid that is caffeinated.</li>
+                    <li>The liquid collects in my digestive system</li>
+                    <li>The caffeine is absorbed into the bloodstream through the stomach and small intestine</li>
+                    <li>Caffeine in the bloodstream diffuses (bidirectionally!) through the blood-brain barrier</li>
+                    <li>Caffeine is filtered through the kidneys</li>
+                </ul>
+            </p>
+
+
+            <h3>modelling diffusion</h3>
+            <p>
+                We can model diffusion using an RC circuit
+            </p>
+            <h3>modelling collection</h3>
+            <p>
+                We can model collection of caffeine in a place (e.g stomach) using an integration circuit.
+            </p>
+
+            <h1>putting it all together</h1>
+
+            <h1>simulation!</h1>
+            <p>
+                On my computer, I use LTSpice to simulate circuits. 
+                However, my cursory search revealed that there are not any good SPICE libraries for Javascript, so the easiest way to simulate the circuit is by using its transfer function.
+            </p>        
+
+        </div>
+
+        <hr  />
+        <figure>
+            <a href="/images/caffeine/whee_caffeine.jpg"><img style="width:709.98046875px" src="/images/caffeine/whee_caffeine.jpg" /></a>
+        </figure>
+
+        <hr  />
+        <a href="https://github.com/ritikmishra/mishra.farm/pull/2">[leave a comment]</a> <span> ~~~ </span> <a href="https://www.admonymous.co/cheese_mishra">[leave a comment anonymously]</a>
+        <hr  />
+    </article>
+</body>
+
+</html>
