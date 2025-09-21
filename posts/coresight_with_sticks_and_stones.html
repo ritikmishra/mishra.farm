@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>mishra.farm -- ARM CoreSight™️ with sticks and stones</title>
+    <meta charset="UTF-8"> <!-- or else the emoji are broken -->
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;1,100;1,200;1,300;1,400;1,500;1,600;1,700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="/styles.css" />
+
+    <!-- <meta property="og:image" content=" TODO: a thumbnail for the blog post " /> -->
+    <!-- <meta property="twitter:image" content=" TODO: a thumbnail for the blog post " /> -->
+</head>
+
+<body>
+    <!-- I wrote the article to have one sentence per line in the source text so that its easier to review it in PR form. -->
+    <article class="page sans">
+        <header>
+            <h1 class="page-title">ARM CoreSight™️ with sticks and stones</h1>
+            <p class="page-description"><i>if you found this page and have done enough prior reading to understand it all, i am truly so sorry.</i></p>
+        </header>
+        <div class="page-body">
+            <h1>motivation</h1>
+            <p>
+                Recently, I had to debug a race condition in firmware that was not obvious by inspection.
+                Broadly, I had a sense that something in my DMA ISR was racing with my application code, but the exact order of events was not clear to me (merely the broken state at the end).
+                Fortunately, there are many tools out there that build on top of ARM CoreSight to take advantage of the debug infrastructure inside the actual ARM core. 
+                Unfortunately, if all you have is an ST-Link and a dream (and you can't wait for a J-Link to arrive in the mail), you're pretty much locked out of using Real Tooling.
+            </p>
+
+            <h1>context</h1>
+            <p>
+                in my setup, I am using:
+                <ul>
+                    <li>An AT SAM E54 microcontroller (i.e a microcontroller with an ARM Cortex-M4 core)</li>
+                    <li>An ST-Link debugger</li>
+                    <ul>
+                        <li>
+                            Strictly speaking, if you're using an Microchip product, it would probably make more sense to use the <a href="https://www.microchip.com/en-us/development-tool/atatmel-ice">ATMEL-ICE</a>, <a href="https://www.microchip.com/en-us/development-tool/PG164100">MPLAB Snap</a>, or another one of their debuggers.
+                            However, although its datasheet claims that the ATMEL-ICE supports SWO, I was unable to get OpenOCD to use it*
+                        </li>
+                        <li>*not that I ultimately ended up using SWO in the end -- my bursts of trace data were too fast for 2 MHz SWO (the ST-Link driver in OpenOCD refused to go any faster).</li>
+                    </ul>
+                    <li>OpenOCD + GDB</li>
+                    <li>bare metal firmware</li>
+                    <ul>
+                        <li>In my search online for prior art, I found that there exist solutions for using ARM CoreSight inside a Linux environment <a href="https://github.com/Linaro/OpenCSD">(specifically, OpenCSD)</a>.</li>
+                    </ul>
+                </ul>
+            </p>
+
+            <h1>what are we trying to do?</h1>
+            <p>
+                I was having an issue where my application code enables two DMA channels to drive a SPI transaction. 
+                <i>Something</i> disables the transmit DMA channel before the transaction is completed.
+                Since no bytes are clocked out/SCLK is never driven, no bytes are clocked in, and the receive DMA channel never completes its transaction.
+                It's not immediately obvious how this happens, since the call chain to starting the transaction enables the receive DMA channel before the transmit DMA channel.
+            </p>
+
+            <p>
+                Broadly, the thing I would like to do is to use the Data Watchpoint and Trace (DWT) peripheral to emit trace events whenever the DMAC registers are manipulated.
+                The DWT can be configured to emit these trace packets either over parallel trace, SWO, or into the ETB.
+                Once we have the packets in hand on an actual computer, we can use <a href="https://github.com/rtic-scope/itm"><code>itm-decode</code></a> to decode the DWT protocol and see what is actually happening.
+            </p>           
+
+            <h1>actually getting debug packets out of the microcontroller</h1>
+
+            There are a few things we need to do in order to enable the Cortex-M4 Trace infrastruc on the SAM MCU
+
+            <h2>Enabling the CM4_TRACE clock domain + ETB</h2>
+
+            By default, the trace infrastructure inside the SAM MCU is powered off -- <a href="https://onlinedocs.microchip.com/oxy/GUID-1FB866E7-F8EE-4F6C-92ED-0F60E926A717-en-US-2/GUID-28ED5697-5FAA-4003-9FEE-D96B431FE662.html">the appropriate GCLK peripheral channel must be enabled</a>.
+            Additionally, the ETB is disabled by default. If enabled, it consumes the first 32KiB of SRAM (i.e memory addresses <code>0x20000000 - 0x20008000</code> become inaccessible in code).
+
+            TODO: Show some C and Rust code that twiddles these registers
+            TODO: Show an updated linker script 
+            <p>firmware side alterations:</p>
+            <ul>
+                <li>enable clock domain for CM4 trace infrastructure</li>
+                <li>adjust linker script to provide space for ETB + set ETBRAMEN</li>
+                <li>set PB30 to AltH for SWO</li>
+            </ul>
+
+            <h2>Configuring ETB/ITM/DWT/ETM</h2>
+            While you <i>could</i> configure ETB/ITM/DWT/ETM registers from within your firmware, I found much more flexibility in configuring them through GDB/OpenOCD.
+
+            
+            <h3>ITM</h3>
+            Despite not directly using the ITM, it is something we will need to enable. DWT trace packets flow through the ITM (as per Figure 2-1 from the Cortex®-M4 Processor Technical Reference Manual) on their way out of the microcontroller.
+
+            <figure>
+                <a href="https://developer.arm.com/documentation/100166/0001/Functional-Description/About-the-functions"><img style="width:709.98046875px" src="/images/coresight_with_sticks_and_stones/cm4_block_diagram.png" /></a>
+                <figcaption>Block diagram from the Cortex-M4 TRM</figcaption>
+            </figure>
+
+            
+            TODO: Show a GDB function that configures the ITM
+
+            <h3>DWT</h3>
+            We want to configure the DWT to emit both the data value and the program counter every time a register in a DMA channel we care about is modified.
+            For my particular instance, I'm using DMA channels 4 and 5. These registers correspond to the address range <code>0x4100_A080..0x4100_A0A0</code>
+
+            TODO: Show a GDB function that configures the DWT
+            
+            <h3>ETB</h3>
+            We care about enabling, disabling, and dumping the contents of the ETB.
+            If we ignore the trigger (i.e always record every trace packet), the ETB behaves like a ring buffer of trace events.
+
+            [[TODO: check this statement for accuracy]]
+            At least, as per the ROM Table as read out by OpenOCD, the SAM E54 does not appear to implement the CoreSight Trace Funnel (CSTF). 
+            However, both the Trace Port Interface Unit (TPIU) and ETB have formatters that allow disambugiation of multiple trace soures that are sharing the same byte stream.
+
+            <h3>ETM</h3>
+            For our particular bug, instruction level trace is not necessary to solve it.
+            However, we have already done all of the prerequisite work required (e.g enabling the CM4_TRACE clock, configuring output method), and nothing else stops us from enabling the ETM.
+            In fact, if we did enable the ETM and collect ETMv3 packets, we would be able to use <code>orbmortem</code> from the <a href="https://github.com/orbcode/orbuculum">orbuculum</a> suite to decode them
+            
+            <h1>identifying the bug</h1>
+
+            <ul>
+                <li>run firmware</li>
+                <li>dump ETB</li>
+                <li>parse packets</li>
+            </ul>
+
+            <h2>collecting trace packets</h2>
+
+            All we need to do next is 
+
+            TODO: find a not stupid way to format this 
+            <pre>
+                break firmware::__cortex_m_rt_main
+                c
+                etbEnable
+                dwtSetupAll
+                ITMTXEna
+                ITMEna
+                c
+                etbDisable
+                etbDump dwt_trace.bin
+            </pre>
+
+            <h2>identifying the problem from the trace</h2>
+
+            Once we have the packets, its trivial to decode them 
+
+            TODO: find a not stupid way to format this
+            <pre>
+                $ itm-decode dwt_trace.bin > dwt_trace.txt
+            </pre>
+            
+            Inspecting the last few trace packets reveals the problem
+
+            TODO: copy paste the trace
+            <pre>
+
+            </pre>
+
+            The DMAC ISR is not waiting for the DMA to finish disabling. The application attempts to reenable before the disable finishes.
+            
+        </div>
+
+        <hr  />
+        also read:
+        <ul>
+            <li><a href="https://ww1.microchip.com/downloads/en/DeviceDoc/SAM_D5xE5x_Family_Data_Sheet_DS60001507F.pdf">SAM D5x/E5x family Datasheet</a></li>
+            <li>
+                Official ARM documentation
+                <ul>
+                    <li>
+                        <a href="https://documentation-service.arm.com/static/606dc36485368c4c2b1bf62f">Armv7-M Architecture Reference Manual</a>
+                        <ul>
+                            <li>Contains ITM and DWT register definitions</li>
+                            <li>Appendix D4 contains the ITM/DWT packet protocol, which is implemented by <a href="https://github.com/rtic-scope/itm"><code>itm-decode</code></a></li>
+                        </ul>
+                    </li>
+                    <li><a href="https://documentation-service.arm.com/static/5fce431be167456a35b36ade">Cortex-M4 Technical Reference Manual</a></li>
+                    <li><a href="https://documentation-service.arm.com/static/63a03a981d698c4dc521ca77">Arm CoreSight Architecture Specification v3.0</a></li>
+                    <li>
+                        <a href="https://documentation-service.arm.com/static/6101719d9ebe3a7dbd3a81ad">CoreSight Components Technical Reference Manual</a>
+                        <ul><li>Contains ETB register definitions</li></ul>
+                    </li>
+                    <li>
+                        <a href="https://documentation-service.arm.com/static/5f90158b4966cd7c95fd5b5e">Embedded Trace Macrocell Architecture Specification</a>
+                        <ul><li>Contains ETM register definitions</li></ul>
+                    </li>
+                    <li>
+                        <a href="https://documentation-service.arm.com/static/5e8ecc36c5ee7d4a00693f2f">CoreSight ETM-M4 Technical Reference Manual</a>
+                        <ul><li>Provides clarity on top of the ETM architecture specification with respect to what functionality is available on Cortex-M4 devices</li></ul>
+                    </li>
+                </ul>
+            </li>
+            <li>
+                Tools to assist in your journey
+                <ul>
+                    <li><a href="https://github.com/orbcode/orbuculum">orbuculum</a></li>
+                    <li><a href="https://github.com/rtic-scope/itm"><code>itm-decode</code></a></li>
+                </ul>
+            </li>
+            <li>
+                Similar journeys from others
+                <ul>
+                    TODO
+                </ul>
+            </li>
+        </ul>
+        <hr  />
+        <ul>
+            <li>
+                <a href="https://github.com/ritikmishra/mishra.farm/pull/3">[suggest a correction in context]</a> 
+            </li>
+            <li>
+                <a href="mailto:ritik.mishra314@gmail.com">[send me an email]</a>
+            </li>
+            <li>
+                <a href="https://www.admonymous.co/cheese_mishra">[leave a comment anonymously]</a>
+            </li>
+        </ul>
+        <hr  />
+        
+    </article>
+</body>
+
+</html>
