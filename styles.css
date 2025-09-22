@@ -32,3 +32,8 @@ figcaption {
     font-style: oblique;
     font-size: 0.9em;
 }
+
+.horizontal {
+    display: flex;
+    flex-direction: row;
+}

@@ -89,32 +89,39 @@
             While you <i>could</i> configure ETB/ITM/DWT/ETM registers from within your firmware, I found much more flexibility in configuring them through GDB/OpenOCD.
 
             
-            <h3>ITM</h3>
-            Despite not directly using the ITM, it is something we will need to enable. DWT trace packets flow through the ITM (as per Figure 2-1 from the Cortex®-M4 Processor Technical Reference Manual) on their way out of the microcontroller.
+            <h3>Instrumentation Trace Macrocell (ITM)</h3>
+            We need to enable the ITM since our DWT trace packets flow through the it (as per Figure 2-1 from the Cortex®-M4 Processor Technical Reference Manual) on their way out of the microcontroller.
 
             <figure>
                 <a href="https://developer.arm.com/documentation/100166/0001/Functional-Description/About-the-functions"><img style="width:709.98046875px" src="/images/coresight_with_sticks_and_stones/cm4_block_diagram.png" /></a>
                 <figcaption>Block diagram from the Cortex-M4 TRM</figcaption>
             </figure>
 
+            <a href="https://github.com/orbcode/orbuculum/blob/ceec063a595892b1fcb477707ae4778d0b8a0e88/Support/gdbtrace.init#L2068-L2088">Orbuculum</a> comes with a GDB script that defines functions to enable/disable/otherwise interact with the ITM:
             
-            TODO: Show a GDB function that configures the ITM
-
-            <h3>DWT</h3>
+            <div class="horizontal">
+                <script src="https://emgithub.com/embed-v2.js?target=https%3A%2F%2Fgithub.com%2Forbcode%2Forbuculum%2Fblob%2Fceec063a595892b1fcb477707ae4778d0b8a0e88%2FSupport%2Fgdbtrace.init%23L2006-L2021&style=default&type=code&showBorder=on&showLineNumbers=on&showFileMeta=on&showFullPath=on&showCopy=on"></script>
+                <script src="https://emgithub.com/embed-v2.js?target=https%3A%2F%2Fgithub.com%2Forbcode%2Forbuculum%2Fblob%2Fceec063a595892b1fcb477707ae4778d0b8a0e88%2FSupport%2Fgdbtrace.init%23L2068-L2083&style=default&type=code&showBorder=on&showLineNumbers=on&showFileMeta=on&showFullPath=on&showCopy=on"></script>
+            </div>
+            
+            <h3>Data Watchpoint and Trace (DWT)</h3>
             We want to configure the DWT to emit both the data value and the program counter every time a register in a DMA channel we care about is modified.
             For my particular instance, I'm using DMA channels 4 and 5. These registers correspond to the address range <code>0x4100_A080..0x4100_A0A0</code>
 
+            The DWT is relatively straightforward to configure (at least in comparison to the ETM). 
             TODO: Show a GDB function that configures the DWT
             
-            <h3>ETB</h3>
+            <h3>Embedded Trace Buffer (ETB)</h3>
             We care about enabling, disabling, and dumping the contents of the ETB.
             If we ignore the trigger (i.e always record every trace packet), the ETB behaves like a ring buffer of trace events.
 
-            [[TODO: check this statement for accuracy]]
             At least, as per the ROM Table as read out by OpenOCD, the SAM E54 does not appear to implement the CoreSight Trace Funnel (CSTF). 
             However, both the Trace Port Interface Unit (TPIU) and ETB have formatters that allow disambugiation of multiple trace soures that are sharing the same byte stream.
+            Since we're exclusively using the DWT, we don't have a great reason to enable the formatter.
 
-            <h3>ETM</h3>
+            <script src="https://gist.github.com/ritikmishra/6536fd3ba5a354da823fd5d96b0c404a.js?file=uwu"></script>
+
+            <h3>Embedded Trace Macrocell (ETM)</h3>
             For our particular bug, instruction level trace is not necessary to solve it.
             However, we have already done all of the prerequisite work required (e.g enabling the CM4_TRACE clock, configuring output method), and nothing else stops us from enabling the ETM.
             In fact, if we did enable the ETM and collect ETMv3 packets, we would be able to use <code>orbmortem</code> from the <a href="https://github.com/orbcode/orbuculum">orbuculum</a> suite to decode them
@@ -211,7 +218,7 @@
         <hr  />
         <ul>
             <li>
-                <a href="https://github.com/ritikmishra/mishra.farm/pull/3">[suggest a correction in context]</a> 
+                <a href="https://github.com/ritikmishra/mishra.farm/pull/3">[suggest a correction/make a comment in context]</a> 
             </li>
             <li>
                 <a href="mailto:ritik.mishra314@gmail.com">[send me an email]</a>
