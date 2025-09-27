@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>mishra.farm -- party tricks to show off your esoteric rust knowledge</title>
+    <meta charset="UTF-8"> <!-- or else the emoji are broken -->
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;1,100;1,200;1,300;1,400;1,500;1,600;1,700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="/styles.css" />
+
+    <meta property="og:image" content="https://mishra.farm/images/try/if_only_you_knew_how_good_things_really_are.gif" />
+    <meta property="twitter:image" content="https://mishra.farm/images/try/if_only_you_knew_how_good_things_really_are.gif" />
+
+    <style>
+        .rust-playground {
+            margin-top: 2em;
+            margin-bottom: 2em;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- I wrote the article to have one sentence per line in the source text so that its easier to review it in PR form. -->
+    <article class="page sans">
+        <header>
+            <h1 class="page-title">party tricks to show off your esoteric rust knowledge</h1>
+            <p class="page-description"></p>
+        </header>
+        <div class="page-body">
+            <h1>motivation</h1>
+            <p>My friend Sasha asked for some Rust party tricks, so here are a few that I remember off of the top of my head.</p>
+
+
+            <h1><code>totally-safe-transmute</code></h1>
+            <p>
+                <a href="https://github.com/ben0x539/totally-safe-transmute">This one</a> was on reddit a while ago. 
+                The trick is that you can open <code>/proc/self/mem</code> as a file to freely edit process memory without <code>unsafe</code>.
+            </p>
+                
+            <script src="https://emgithub.com/embed-v2.js?target=https%3A%2F%2Fgithub.com%2Fben0x539%2Ftotally-safe-transmute%2Fblob%2Fad7d3c05d3c1dca55edf72cc5299a1039fc06c56%2Fsrc%2Flib.rs%23L3-L21&style=default&type=code&showBorder=on&showLineNumbers=on&showFileMeta=on&showFullPath=on&showCopy=on"></script>
+
+            <h1>undroppable types</h1>
+            <p>
+                I learned this from Lachlan. Putting a <code>const</code>-context panic inside a function's <code>Drop</code> implementation means that dropping it (e.g with <code>drop</code> or by letting it fall out of scope) will emit a compile error.
+                The only way to 'get rid' of such a value is by <code>std::mem::forget</code>.
+            </p>
+            
+            <iframe class="rust-playground" width="150%" height="750px" src="https://play.rust-lang.org/?version=stable&mode=debug&edition=2024&code=%0Astruct+DoNotDropThisData%3CT%3E%28T%29%3B%0A%0Aimpl%3CT%3E+Drop+for+DoNotDropThisData%3CT%3E+%7B%0A++++fn+drop%28%26mut+self%29+%7B%0A++++++++const+%7B%0A++++++++++++panic%21%28%22what+did+i+tell+you%3F%22%29%0A++++++++%7D%0A++++%7D%0A%7D%0A%0Afn+main%28%29+%7B%0A++++%2F%2F+fails+to+compile%21%0A++++let+undroppable+%3D+DoNotDropThisData%283_u32%29%3B%0A%7D%0A%0A+">
+            </iframe>
+            
+            <p>This only works for generic types, since the <code>const</code> expression is evaluated per monomorphization.</p>
+            
+            <iframe class="rust-playground" width="150%" height="500px" src="https://play.rust-lang.org/?version=stable&mode=debug&edition=2024&code=%0Astruct+DoNotDropThisHandle%3B%0A%0Aimpl+Drop+for+DoNotDropThisHandle+%7B%0A++++fn+drop%28%26mut+self%29+%7B%0A++++++++const+%7B%0A++++++++++++panic%21%28%22this+const+is+always+evaluated%2C+so+the+code+never+compiles%22%29%0A++++++++%7D%0A++++%7D%0A%7D%0A%0A+">
+            </iframe>
+            
+            <h1>Unified Canadian Aboriginal Syllabics block</h1>
+            
+            <p>There's a Reddit post from before Go introduced generics that I appreciate a lot:</p>
+            
+            <a href="https://www.reddit.com/r/rust/comments/5penft/comment/dcsq64p">
+                <img src="/images/rust_party_tricks/go_generics.webp" />
+            </a>
+            
+            <p>Rust is equally liberal about what characters are allowed in identifiers, so if you wanted to, you could do this in Rust as well!</p>
+            <iframe class="rust-playground" width="150%" height="500px" src="https://play.rust-lang.org/?version=stable&mode=debug&edition=2024&code=%0A%2F%2F+Typically%2C+code+that+_looks_+like+this+would+emit+a+compile+error+%0A%2F%2F+because+of+the+unused+type+parameter+%60T%60%0Astruct+NotActuallyGeneric%E1%90%B8T%E1%90%B3%3B%0A">
+            </iframe>
+
+            <h1>bootleg proc macro</h1>
+
+            <p>
+                The typical tool of choice for generating nontrivial amounts of code at compile time are <a href="https://doc.rust-lang.org/reference/procedural-macros.html">proc macros</a>.
+                However, I did come across another method in the wild that works if you don't need to consume any AST tokens from the actual site of use: dynamically generating code at build time in the <code>build.rs</code> script, and using <code>include!</code> to include the generated code verbatim in the crate source.
+                This trick is used in the <a href="https://crates.io/crates/dxf"><code>dxf</code></a> crate to automatically generate struct definitions from XML files.
+            </p>
+
+            <p>
+                The crate generates code in <code>build.rs</code>,
+                and then <code>include!</code> it in the crate source.
+            </p>
+            <script src="https://emgithub.com/embed-v2.js?target=https%3A%2F%2Fgithub.com%2Fixmilia%2Fdxf-rs%2Fblob%2F74c2acc994d776a12e33ea57c3416d9ddf300a5e%2Fbuild%2Fbuild.rs%23L33-L51&style=default&type=code&showBorder=on&showLineNumbers=on&showFileMeta=on&showFullPath=on&showCopy=on"></script>
+            <script src="https://emgithub.com/embed-v2.js?target=https%3A%2F%2Fgithub.com%2Fixmilia%2Fdxf-rs%2Fblob%2F74c2acc994d776a12e33ea57c3416d9ddf300a5e%2Fsrc%2Fgenerated.rs%23L1-L13&style=default&type=code&showBorder=on&showLineNumbers=on&showFileMeta=on&showFullPath=on&showCopy=on"></script>
+        
+            <p>The Rust <a href="https://doc.rust-lang.org/std/macro.include.html"><code>include!</code></a> macro works similarly to <code>#include</code> in C.</p>
+        </div>
+
+        <hr  />
+        <a href="https://github.com/ritikmishra/mishra.farm/pull/3">[leave a comment]</a> <span> ~~~ </span> <a href="https://www.admonymous.co/cheese_mishra">[leave a comment anonymously]</a>
+        <hr  />
+    </article>
+</body>
+
+</html>
