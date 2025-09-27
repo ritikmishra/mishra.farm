@@ -12,6 +12,10 @@
         rel="stylesheet">
     <link rel="stylesheet" href="/styles.css" />
 
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/plugins/line-numbers/prism-line-numbers.min.css" rel="stylesheet" />
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/plugins/line-highlight/prism-line-highlight.min.css" rel="stylesheet" />
+
     <style>
         .rust-playground {
             margin-top: 2em;
@@ -34,10 +38,10 @@
 
             <h1><code>totally-safe-transmute</code></h1>
             <p>
-                <a href="https://github.com/ben0x539/totally-safe-transmute">This one</a> was on reddit a while ago. 
+                <a href="https://github.com/ben0x539/totally-safe-transmute">This one</a> was on reddit a while ago.
                 The trick is that you can open <code>/proc/self/mem</code> as a file to freely edit process memory without <code>unsafe</code>.
             </p>
-                
+
             <script src="https://emgithub.com/embed-v2.js?target=https%3A%2F%2Fgithub.com%2Fben0x539%2Ftotally-safe-transmute%2Fblob%2Fad7d3c05d3c1dca55edf72cc5299a1039fc06c56%2Fsrc%2Flib.rs%23L3-L21&style=default&type=code&showBorder=on&showLineNumbers=on&showFileMeta=on&showFullPath=on&showCopy=on"></script>
 
             <h1>undroppable types</h1>
@@ -45,25 +49,13 @@
                 I learned this from Lachlan. Putting a <code>const</code>-context panic inside a function's <code>Drop</code> implementation means that dropping it (e.g with <code>drop</code> or by letting it fall out of scope) will emit a compile error.
                 The only way to 'get rid' of such a value is by <code>std::mem::forget</code>.
             </p>
-            
+
             <iframe class="rust-playground" width="150%" height="750px" src="https://play.rust-lang.org/?version=stable&mode=debug&edition=2024&code=%0Astruct+DoNotDropThisData%3CT%3E%28T%29%3B%0A%0Aimpl%3CT%3E+Drop+for+DoNotDropThisData%3CT%3E+%7B%0A++++fn+drop%28%26mut+self%29+%7B%0A++++++++const+%7B%0A++++++++++++panic%21%28%22what+did+i+tell+you%3F%22%29%0A++++++++%7D%0A++++%7D%0A%7D%0A%0Afn+main%28%29+%7B%0A++++%2F%2F+fails+to+compile%21%0A++++let+undroppable+%3D+DoNotDropThisData%283_u32%29%3B%0A%7D%0A%0A+">
             </iframe>
-            
+
             <p>This only works for generic types, since the <code>const</code> expression is evaluated per monomorphization.</p>
-            
+
             <iframe class="rust-playground" width="150%" height="500px" src="https://play.rust-lang.org/?version=stable&mode=debug&edition=2024&code=%0Astruct+DoNotDropThisHandle%3B%0A%0Aimpl+Drop+for+DoNotDropThisHandle+%7B%0A++++fn+drop%28%26mut+self%29+%7B%0A++++++++const+%7B%0A++++++++++++panic%21%28%22this+const+is+always+evaluated%2C+so+the+code+never+compiles%22%29%0A++++++++%7D%0A++++%7D%0A%7D%0A%0A+">
-            </iframe>
-            
-            <h1>Unified Canadian Aboriginal Syllabics block</h1>
-            
-            <p>There's a Reddit post from before Go introduced generics that I appreciate a lot:</p>
-            
-            <a href="https://www.reddit.com/r/rust/comments/5penft/comment/dcsq64p">
-                <img src="/images/rust_party_tricks/go_generics.webp" />
-            </a>
-            
-            <p>Rust is equally liberal about what characters are allowed in identifiers, so if you wanted to, you could do this in Rust as well!</p>
-            <iframe class="rust-playground" width="150%" height="500px" src="https://play.rust-lang.org/?version=stable&mode=debug&edition=2024&code=%0A%2F%2F+Typically%2C+code+that+_looks_+like+this+would+emit+a+compile+error+%0A%2F%2F+because+of+the+unused+type+parameter+%60T%60%0Astruct+NotActuallyGeneric%E1%90%B8T%E1%90%B3%3B%0A">
             </iframe>
 
             <h1>bootleg proc macro</h1>
@@ -80,14 +72,84 @@
             </p>
             <script src="https://emgithub.com/embed-v2.js?target=https%3A%2F%2Fgithub.com%2Fixmilia%2Fdxf-rs%2Fblob%2F74c2acc994d776a12e33ea57c3416d9ddf300a5e%2Fbuild%2Fbuild.rs%23L33-L51&style=default&type=code&showBorder=on&showLineNumbers=on&showFileMeta=on&showFullPath=on&showCopy=on"></script>
             <script src="https://emgithub.com/embed-v2.js?target=https%3A%2F%2Fgithub.com%2Fixmilia%2Fdxf-rs%2Fblob%2F74c2acc994d776a12e33ea57c3416d9ddf300a5e%2Fsrc%2Fgenerated.rs%23L1-L13&style=default&type=code&showBorder=on&showLineNumbers=on&showFileMeta=on&showFullPath=on&showCopy=on"></script>
-        
+
             <p>The Rust <a href="https://doc.rust-lang.org/std/macro.include.html"><code>include!</code></a> macro works similarly to <code>#include</code> in C.</p>
+
+            <h1>post-build scripts</h1>
+
+            <p>
+                On occasion, it is useful to run some arbitrary script after compilation has finished.
+                For example, it may be useful to produce extra artifacts (such as a binary file to compliment a generated ELF executable).
+                This particular action is common for firmware targets (<a href="https://github.com/rust-lang/rfcs/pull/1777">a rejected RFC</a> mentions wanting to do this for the AVR platform, which is a family of microcontrollers).
+                While there is no anointed way to do this in Cargo, <a href="https://doc.rust-lang.org/cargo/reference/config.html#targettriplelinker">we can make <code>rustc</code> invoke a different linker executable</a>, like a bash script that wraps <code>rust-lld</code>.
+            </p>
+
+            <p>
+                The crux of the trick is that <code>rustc</code> will invoke the linker with arguments that look like this:
+            </p>
+            <pre><code class="language-unknown">rust-lld \
+    -m64 {{ codegen units from our crate}} \
+    -Wl,--as-needed -Wl,-Bstatic {{ bits of the Rust standard library }} \
+    -Wl,-Bdynamic -lgcc_s -lutil -lrt -lpthread -lm -ldl -lc -Wl,--eh-frame-hdr -Wl,-z,noexecstack -L {{more bits of std}} \
+
+    -o /Users/ritikmishra/__workspace/test_linker_trick/target/x86_64-unknown-linux-gnu/release/deps/test_linker_trick-5c2307036ad5cb3c \
+
+    -Wl,--gc-sections -pie -Wl,-z,relro,-z,now -Wl,-O1 -Wl,--strip-debug -nodefaultlibs</code></pre>
+
+            <p>Most usefully, the path of the final executable is passed via the <code>-o</code> flag to the linker. As such, we can write the following <code>linker_wrapper.sh</code> Bash script in the crate's root folder (adjacent to <code>Cargo.toml</code>):</p>
+            <pre class="line-numbers"><code class="language-bash">#!/bin/bash
+set -euo pipefail
+
+# Find the argument after '-o'
+executable_path=""
+args=("$@")
+for ((i=0; i<${#args[@]}; i++)); do
+    if [[ "${args[$i]}" == "-o" && $((i+1)) -lt ${#args[@]} ]]; then
+        executable_path="${args[$((i+1))]}"
+        break
+    fi
+done
+
+# Execute linker normally
+rust-lld "$@"
+
+# Do whatever we want!
+objcopy -O binary $executable_path binary.bin</code></pre>
+
+        <p>This must be supplemented with configuration in <code>.cargo/config.toml</code> to use it:</p>
+        <pre class="line-numbers"><code class="language-toml">[target.'cfg(all())']
+linker = "./linker_wrapper.sh"</code></pre>
+
+        <p>
+            One of my favorite uses for this is stamping binaries with the current Git hash <i>after</i> compilation. 
+            I prefer this over other approaches (e.g <a href="https://github.com/lukaslueg/built"><code>built</code></a>) that involve collecting the Git hash before compilation starts in order to store it in a <code>const</code>, as doing so means that checking out a different commit will always necessitate recompilation (as opposed to merely re-linking).
+            In practice, it may not be appropriate to use the same wrapper script for <i>all</i> targets (e.g since different utilities are required to interact with Mach-O files for macOS and Portable Executable files for Windows).
+        </p>
         </div>
+
+        <h1>Unified Canadian Aboriginal Syllabics block</h1>
+
+        <p>There's a Reddit post from before Go introduced generics that I appreciate a lot:</p>
+
+        <a href="https://www.reddit.com/r/rust/comments/5penft/comment/dcsq64p">
+            <img src="/images/rust_party_tricks/go_generics.webp" />
+        </a>
+
+        <p>Rust is equally liberal about what characters are allowed in identifiers, so if you wanted to, you could do this in Rust as well!</p>
+        <iframe class="rust-playground" width="150%" height="500px" src="https://play.rust-lang.org/?version=stable&mode=debug&edition=2024&code=%0A%2F%2F+Typically%2C+code+that+_looks_+like+this+would+emit+a+compile+error+%0A%2F%2F+because+of+the+unused+type+parameter+%60T%60%0Astruct+NotActuallyGeneric%E1%90%B8T%E1%90%B3%3B%0A">
+        </iframe>
+
 
         <hr  />
         <a href="https://github.com/ritikmishra/mishra.farm/pull/3">[leave a comment]</a> <span> ~~~ </span> <a href="https://www.admonymous.co/cheese_mishra">[leave a comment anonymously]</a>
         <hr  />
     </article>
+
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/plugins/line-numbers/prism-line-numbers.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/plugins/line-highlight/prism-line-highlight.min.js"></script>
 </body>
 
 </html>
