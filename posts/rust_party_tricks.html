@@ -127,6 +127,26 @@ linker = "./linker_wrapper.sh"</code></pre>
         </p>
         </div>
 
+        <h1><code>&dyn</code>/<code>&mut dyn</code> but for stack variables</h1>
+
+        <p>
+            From time to time, the temptation arises to use <code>Box&lt;dyn SomeTrait&gt;</code>.
+            However, in many cases, it is possible to avoid the heap allocation by making a reference to a stack variable that is conditionally initialized like so:
+        </p>
+        <iframe width="150%" height="500px" src="https://godbolt.org/e?hideEditorToolbars=true#g:!((g:!((g:!((h:codeEditor,i:(filename:'1',fontScale:14,fontUsePx:'0',j:1,lang:rust,selection:(endColumn:1,endLineNumber:17,positionColumn:1,positionLineNumber:17,selectionStartColumn:1,selectionStartLineNumber:17,startColumn:1,startLineNumber:17),source:'%23!!%5Bno_std%5D%0A%23%5Bunsafe(no_mangle)%5D%0Apub+fn+conditional_display(cond:+bool)+%7B%0A++++let+a:+u32%3B%0A++++let+b:+f32%3B%0A%0A++++let+reference:+%26dyn+core::fmt::Display+%3D+if+cond+%7B%0A++++++++a+%3D+4_u32%3B%0A++++++++%26a%0A++++%7D+else+%7B%0A++++++++b+%3D+4.0%3B%0A++++++++%26b%0A++++%7D%3B%0A%0A++++core::hint::black_box(reference)%3B%0A%7D%0A'),l:'5',n:'0',o:'Rust+source+%231',t:'0')),k:46.045197740113,l:'4',n:'0',o:'',s:0,t:'0'),(g:!((h:compiler,i:(compiler:r1900,filters:(b:'0',binary:'1',binaryObject:'1',commentOnly:'0',debugCalls:'1',demangle:'0',directives:'0',execute:'1',intel:'0',libraryCode:'0',trim:'1',verboseDemangling:'0'),flagsViewOpen:'1',fontScale:14,fontUsePx:'0',j:1,lang:rust,libs:!(),options:'--target+thumbv7em-none-eabihf+-C+opt-level%3D2',overrides:!(),selection:(endColumn:19,endLineNumber:5,positionColumn:19,positionLineNumber:5,selectionStartColumn:19,selectionStartLineNumber:5,startColumn:19,startLineNumber:5),source:1),l:'5',n:'0',o:'+rustc+1.90.0+(Editor+%231)',t:'0')),k:53.95480225988701,l:'4',n:'0',o:'',s:0,t:'0')),l:'2',n:'0',o:'',t:'0')),version:4"></iframe>
+        <p>
+            Looking at the disassembly (when compiled for <code>thumbv7em-none-eabihf</code>, which is a 32-bit architecture I happen to target often), we only use 12 bytes of stack.
+            The compiler is smart enough to know that the use of <code>a</code> and <code>b</code> is disjoint, so both <code>a</code> and <code>b</code> consume the first 4 bytes of the stack frame.
+            The remaining 8 bytes (i.e two machine words for <code>thumbv7em</code>) is taken by <code>reference</code> (since it is a fat pointer due to being <code>dyn</code>).
+        </p>
+        <p>
+            I find this trick useful in two situations:
+            <ul>
+                <li>when writing a scrappy binary that can either read from a <code>std::fs::File</code> or <code>std::io::stdin</code> and I feel uselessly clever</li>
+                <li>on embedded, I cannot give up and use <code>Box&lt;dyn Future&lt;Output = ...&gt;&gt;</code> (because of the <code>Box</code>), so this trick occasionally comes in handy.</li>
+            </ul>
+        </p>
+
         <h1>Unified Canadian Aboriginal Syllabics block</h1>
 
         <p>There's a Reddit post from before Go introduced generics that I appreciate a lot:</p>
