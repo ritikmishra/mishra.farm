@@ -137,7 +137,6 @@ linker = "./linker_wrapper.sh"</code></pre>
         <p>
             Looking at the disassembly (when compiled for <code>thumbv7em-none-eabihf</code>, which is a 32-bit architecture I happen to target often), we only use 12 bytes of stack.
             The compiler is smart enough to know that the use of <code>a</code> and <code>b</code> is disjoint, so both <code>a</code> and <code>b</code> consume the first 4 bytes of the stack frame.
-            The remaining 8 bytes (i.e two machine words for <code>thumbv7em</code>) is taken by <code>reference</code> (since it is a fat pointer due to being <code>dyn</code>).
         </p>
         <p>
             I find this trick useful in two situations:
