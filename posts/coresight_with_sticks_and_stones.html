@@ -12,6 +12,13 @@
         rel="stylesheet">
     <link rel="stylesheet" href="/styles.css" />
 
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/plugins/line-numbers/prism-line-numbers.min.css" rel="stylesheet" />
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/plugins/line-highlight/prism-line-highlight.min.css" rel="stylesheet" />
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/plugins/diff-highlight/prism-diff-highlight.min.css" rel="stylesheet" />
+
+    <script src="//unpkg.com/alpinejs" defer></script>
+
     <!-- <meta property="og:image" content=" TODO: a thumbnail for the blog post " /> -->
     <!-- <meta property="twitter:image" content=" TODO: a thumbnail for the blog post " /> -->
 </head>
@@ -27,9 +34,11 @@
             <h1>motivation</h1>
             <p>
                 Recently, I had to debug a race condition in firmware that was not obvious by inspection.
-                Broadly, I had a sense that something in my DMA ISR was racing with my application code, but the exact order of events was not clear to me (merely the broken state at the end).
+                I had a sense that there was a race between a DMA and my application code, but the exact order of events was not clear to me (merely a mysterious state at the end).
+                <br>
                 Fortunately, there are many tools out there that build on top of ARM CoreSight to take advantage of the debug infrastructure inside the actual ARM core. 
-                Unfortunately, if all you have is an ST-Link and a dream (and you can't wait for a J-Link to arrive in the mail), you're pretty much locked out of using Real Tooling.
+                However, a lot of the "real" tooling requires specific hardware + software to use (e.g a J-Link/J-Trace + SEGGER Ozone, or TRACE32 + IAR Workbench)
+                I needed to make this work with an an ST-Link and open tooling.
             </p>
 
             <h1>context</h1>
@@ -41,9 +50,9 @@
                     <ul>
                         <li>
                             Strictly speaking, if you're using an Microchip product, it would probably make more sense to use the <a href="https://www.microchip.com/en-us/development-tool/atatmel-ice">ATMEL-ICE</a>, <a href="https://www.microchip.com/en-us/development-tool/PG164100">MPLAB Snap</a>, or another one of their debuggers.
-                            However, although its datasheet claims that the ATMEL-ICE supports SWO, I was unable to get OpenOCD to use it*
+                            However, although its datasheet claims that the ATMEL-ICE supports SWO, I was unable to get OpenOCD to recognize this*
                         </li>
-                        <li>*not that I ultimately ended up using SWO in the end -- my bursts of trace data were too fast for 2 MHz SWO (the ST-Link driver in OpenOCD refused to go any faster).</li>
+                        <li>*not that I ultimately ended up using SWO in the end -- my bursts of trace data were too fast for 2 MHz SWO (the ST-Link driver in OpenOCD refused to run SWO any faster).</li>
                     </ul>
                     <li>OpenOCD + GDB</li>
                     <li>bare metal firmware</li>
@@ -53,73 +62,361 @@
                 </ul>
             </p>
 
-            <h1>what are we trying to do?</h1>
+            <h1>my problem</h1>
             <p>
                 I was having an issue where my application code enables two DMA channels to drive a SPI transaction. 
-                <i>Something</i> disables the transmit DMA channel before the transaction is completed.
-                Since no bytes are clocked out/SCLK is never driven, no bytes are clocked in, and the receive DMA channel never completes its transaction.
-                It's not immediately obvious how this happens, since the call chain to starting the transaction enables the receive DMA channel before the transmit DMA channel.
+                <i>Something</i> disables the transmit DMA channel before the transaction is completed. 
+                The TX DMA is responsible for driving SCLK, so the RX DMA waits indefinitely for bytes to arrive on the bus.
+                It's not immediately obvious how this happens -- by inspection, when the firmware starts the SPI transaction, the RX DMA channel is enabled before the TX DMA channel.
             </p>
 
             <p>
-                Broadly, the thing I would like to do is to use the Data Watchpoint and Trace (DWT) peripheral to emit trace events whenever the DMAC registers are manipulated.
-                The DWT can be configured to emit these trace packets either over parallel trace, SWO, or into the ETB.
-                Once we have the packets in hand on an actual computer, we can use <a href="https://github.com/rtic-scope/itm"><code>itm-decode</code></a> to decode the DWT protocol and see what is actually happening.
+                From attempting other strategies (namely, RTT logging), I came to understand that this issue was timing-sensitive. 
+                Fortunately, we can make the Data Watchpoint and Trace (DWT) peripheral to emit trace events whenever our DMAC registers are accessed <b>without halting the core</b>.
+                These trace packets can be streamed live via parallel trace/SWO, or stored in the ETB and extracted later.
+                They can then be decoded (e.g by <a href="https://github.com/rtic-scope/itm"><code>itm-decode</code></a>).
             </p>           
 
-            <h1>actually getting debug packets out of the microcontroller</h1>
+            <h1>producing trace events</h1>
 
-            There are a few things we need to do in order to enable the Cortex-M4 Trace infrastruc on the SAM MCU
+            There are a few things we need to do in order to enable the Cortex-M4 Trace infrastrucure on the SAM MCU
 
-            <h2>Enabling the CM4_TRACE clock domain + ETB</h2>
+            <h2>Enabling the CM4_TRACE clock domain + ETB Trace RAM</h2>
 
-            By default, the trace infrastructure inside the SAM MCU is powered off -- <a href="https://onlinedocs.microchip.com/oxy/GUID-1FB866E7-F8EE-4F6C-92ED-0F60E926A717-en-US-2/GUID-28ED5697-5FAA-4003-9FEE-D96B431FE662.html">the appropriate GCLK peripheral channel must be enabled</a>.
-            Additionally, the ETB is disabled by default. If enabled, it consumes the first 32KiB of SRAM (i.e memory addresses <code>0x20000000 - 0x20008000</code> become inaccessible in code).
+            By default, the trace infrastructure inside the SAM E54 MCU is powered off -- <a href="https://onlinedocs.microchip.com/oxy/GUID-1FB866E7-F8EE-4F6C-92ED-0F60E926A717-en-US-2/GUID-28ED5697-5FAA-4003-9FEE-D96B431FE662.html">the appropriate GCLK peripheral channel must be enabled</a>.
+            Additionally, the ETB is disabled by default. If enabled, it consumes the first 32KiB of SRAM (i.e memory addresses <code>0x20000000 - 0x20008000</code> become inaccessible).
 
-            TODO: Show some C and Rust code that twiddles these registers
-            TODO: Show an updated linker script 
             <p>firmware side alterations:</p>
             <ul>
                 <li>enable clock domain for CM4 trace infrastructure</li>
                 <li>adjust linker script to provide space for ETB + set ETBRAMEN</li>
-                <li>set PB30 to AltH for SWO</li>
             </ul>
 
-            <h2>Configuring ETB/ITM/DWT/ETM</h2>
-            While you <i>could</i> configure ETB/ITM/DWT/ETM registers from within your firmware, I found much more flexibility in configuring them through GDB/OpenOCD.
+                      <pre class="line-numbers"><code class="language-diff-rust diff-highlight">     // Instantiate peripherals
+     let mut p = atsamd_hal::pac::Peripherals::take().unwrap();
+     let (mut buses, clocks, tokens) =
+         clock::v2::clock_system_at_reset(p.oscctrl, p.osc32kctrl, p.gclk, p.mclk, &mut p.nvmctrl);
+         
+         
+     // ......
+     // elided: configuring the rest of the clock tree
+     // ......
+ 
+     let (_, _, gclk, mut mclk) = unsafe { clocks.pac.steal() };
+ 
++     // Enable clock for CM-Trace.
++     // See Table 14-9 in the AT SAM D5X/E5X Family Reference Manual.
++     gclk.pchctrl(47)
++         .write(|w| w.chen().set_bit().r#gen().gclk0());
++ 
++     // Enable ETB
++     unsafe {
++         // Clear write protection on the DSU
++         p.pac.wrctrl().write(|w| w.key().clr().perid().bits(33));
++         p.dsu.cfg().modify(|_, w| w.etbramen().set_bit());
++         p.pac.wrctrl().write(|w| w.key().set_().perid().bits(33));
++     }
+</code></pre>
+                      <pre class="line-numbers"><code class="language-diff-ld diff-highlight"> MEMORY
+ {
+     FLASH (rx) : ORIGIN = 0x00000000, LENGTH = 0x100000
+-    RAM (rwx) : ORIGIN = 0x20000000, LENGTH = 0x20000
++    ETB (rwx) : ORIGIN = 0x20000000, LENGTH = 0x8000
++    RAM (rwx) : ORIGIN = 0x20008000, LENGTH = 0x18000
+ }
+</code></pre>
 
+
+
+            <h2>Configuring ETB/ITM/DWT/ETM</h2>
+            While you <i>can</i> configure ETB/ITM/DWT/ETM registers from within your firmware, it is much more flexible to configure them through GDB/OpenOCD.
+            <br><br>
+            <i>Although, you might want to enable the DWT in your firmware to use its CPU cycle counter!</i>
+
+            <h3>did my mcu vendor freestyle the addresses?</h3>
+            You can double check which addresses your ARM CoreSight components are at by checking the CoreSight ROM tables. This is straightforward to do with OpenOCD:
+
+            TODO: collapse!
+
+            <pre class="line-numbers" data-line="27"><code class="language-unknown">(gdb) monitor dap info
+AP # 0x0
+                AP ID register 0x24770011
+                Type is MEM-AP AHB3
+MEM-AP BASE 0x41003003
+                Valid ROM table present
+                Component base address 0x41003000
+                Peripheral ID 0x000009fcd0
+                Designer is 0x01f, Atmel
+                Part is 0xcd0, Atmel CPU with DSU (CPU)
+                Component class is 0x1, ROM table
+                MEMTYPE system memory present on bus
+        ROMTABLE[0x0] = 0x9f0fc003
+                Component base address 0xe00ff000
+                Peripheral ID 0x04000bb4c4
+                Designer is 0x23b, ARM Ltd
+                Part is 0x4c4, Cortex-M4 ROM (ROM Table)
+                Component class is 0x1, ROM table
+                MEMTYPE system memory present on bus
+        [L01] ROMTABLE[0x0] = 0xfff0f003
+                Component base address 0xe000e000
+                Peripheral ID 0x04000bb00c
+                Designer is 0x23b, ARM Ltd
+                Part is 0x00c, Cortex-M4 SCS (System Control Space)
+                Component class is 0xe, Generic IP component
+        [L01] ROMTABLE[0x4] = 0xfff02003
+                Component base address 0xe0001000
+                Peripheral ID 0x04003bb002
+                Designer is 0x23b, ARM Ltd
+                Part is 0x002, Cortex-M3 DWT (Data Watchpoint and Trace)
+                Component class is 0xe, Generic IP component
+        [L01] ROMTABLE[0x8] = 0xfff03003
+                Component base address 0xe0002000
+                Peripheral ID 0x04002bb003
+                Designer is 0x23b, ARM Ltd
+                Part is 0x003, Cortex-M3 FPB (Flash Patch and Breakpoint)
+                Component class is 0xe, Generic IP component
+        [L01] ROMTABLE[0xc] = 0xfff01003
+                Component base address 0xe0000000
+                Peripheral ID 0x04003bb001
+                Designer is 0x23b, ARM Ltd
+                Part is 0x001, Cortex-M3 ITM (Instrumentation Trace Module)
+                Component class is 0xe, Generic IP component
+        [L01] ROMTABLE[0x10] = 0xfff41003
+                Component base address 0xe0040000
+                Peripheral ID 0x04000bb9a1
+                Designer is 0x23b, ARM Ltd
+                Part is 0x9a1, Cortex-M4 TPIU (Trace Port Interface Unit)
+                Component class is 0x9, CoreSight component
+                Type is 0x11, Trace Sink, Port
+        [L01] ROMTABLE[0x14] = 0xfff42003
+                Component base address 0xe0041000
+                Peripheral ID 0x04000bb925
+                Designer is 0x23b, ARM Ltd
+                Part is 0x925, Cortex-M4 ETM (Embedded Trace)
+                Component class is 0x9, CoreSight component
+                Type is 0x13, Trace Source, Processor
+        [L01] ROMTABLE[0x18] = 0xfff43003
+                Component base address 0xe0042000
+                Peripheral ID 0x04003bb907
+                Designer is 0x23b, ARM Ltd
+                Part is 0x907, CoreSight ETB (Trace Buffer)
+                Component class is 0x9, CoreSight component
+                Type is 0x21, Trace Sink, Buffer
+        [L01] ROMTABLE[0x1c] = 0x00000000
+        [L01]   End of ROM table
+        ROMTABLE[0x4] = 0x00000000
+                End of ROM table
+(gdb)</code></pre>
             
             <h3>Instrumentation Trace Macrocell (ITM)</h3>
             We need to enable the ITM since our DWT trace packets flow through the it (as per Figure 2-1 from the Cortex®-M4 Processor Technical Reference Manual) on their way out of the microcontroller.
 
             <figure>
                 <a href="https://developer.arm.com/documentation/100166/0001/Functional-Description/About-the-functions"><img style="width:709.98046875px" src="/images/coresight_with_sticks_and_stones/cm4_block_diagram.png" /></a>
-                <figcaption>Block diagram from the Cortex-M4 TRM</figcaption>
+                <figcaption>Block diagram from the <a href="https://developer.arm.com/documentation/100166/0001/Functional-Description/About-the-functions">Cortex-M4 TRM</a></figcaption>
             </figure>
 
-            <a href="https://github.com/orbcode/orbuculum/blob/ceec063a595892b1fcb477707ae4778d0b8a0e88/Support/gdbtrace.init#L2068-L2088">Orbuculum</a> comes with a GDB script that defines functions to enable/disable/otherwise interact with the ITM:
-            
-            <div class="horizontal">
-                <script src="https://emgithub.com/embed-v2.js?target=https%3A%2F%2Fgithub.com%2Forbcode%2Forbuculum%2Fblob%2Fceec063a595892b1fcb477707ae4778d0b8a0e88%2FSupport%2Fgdbtrace.init%23L2006-L2021&style=default&type=code&showBorder=on&showLineNumbers=on&showFileMeta=on&showFullPath=on&showCopy=on"></script>
-                <script src="https://emgithub.com/embed-v2.js?target=https%3A%2F%2Fgithub.com%2Forbcode%2Forbuculum%2Fblob%2Fceec063a595892b1fcb477707ae4778d0b8a0e88%2FSupport%2Fgdbtrace.init%23L2068-L2083&style=default&type=code&showBorder=on&showLineNumbers=on&showFileMeta=on&showFullPath=on&showCopy=on"></script>
+            <div x-data="{ tab: 'datasheet' }">
+                <!-- Tab buttons using radio inputs -->
+                <div class="tabs">
+                    <label :class="tab === 'datasheet' && 'enabled'">
+                        <input type="radio" value="datasheet" x-model="tab">
+                        <span>ITM_TCR datasheet excerpt</span>
+                    </label>
+                    <label :class="tab === 'orbuculum' && 'enabled'">
+                        <input type="radio" value="orbuculum" x-model="tab">
+                        <span>Orbuculum's GDB script to alter them</span>
+                    </label>
+                </div>
+
+                <!-- Tab content -->
+                <div class="tabs-content">
+                    <div x-show="tab === 'datasheet'">
+                        Both ITM_TCR.ITMENA and ITM_TCR.TXENA need to be enabled to allow the DWT to emit ITM packets:
+                        <figure>
+                            <a href="https://developer.arm.com/documentation/ddi0403/d/Debug-Architecture/ARMv7-M-Debug/The-Instrumentation-Trace-Macrocell/Trace-Control-Register--ITM-TCR?lang=en"><img style="width:709.98046875px" src="/images/coresight_with_sticks_and_stones/itm_tcr.png" /></a>
+                            <figcaption>from the <a href="https://developer.arm.com/documentation/ddi0403/d/Debug-Architecture/ARMv7-M-Debug/The-Instrumentation-Trace-Macrocell/Trace-Control-Register--ITM-TCR?lang=en">ARMv7-M reference manual</a></figcaption>
+                        </figure>
+                        Strictly speaking, since the DWT can also just cause a breakpoint, enabling the ITM is not a strict requirement for enabling the DWT.
+                    </div>
+                    <div x-show="tab === 'orbuculum'">
+                        <a href="https://github.com/orbcode/orbuculum/blob/ceec063a595892b1fcb477707ae4778d0b8a0e88/Support/gdbtrace.init#L2068-L2088">Orbuculum</a> comes with a GDB script that defines functions to enable/disable/otherwise interact with the ITM:
+                        
+                        <script src="https://emgithub.com/embed-v2.js?target=https%3A%2F%2Fgithub.com%2Forbcode%2Forbuculum%2Fblob%2Fceec063a595892b1fcb477707ae4778d0b8a0e88%2FSupport%2Fgdbtrace.init%23L2006-L2021&style=default&type=code&showBorder=on&showLineNumbers=on&showFileMeta=on&showFullPath=on&showCopy=on"></script>
+                        <script src="https://emgithub.com/embed-v2.js?target=https%3A%2F%2Fgithub.com%2Forbcode%2Forbuculum%2Fblob%2Fceec063a595892b1fcb477707ae4778d0b8a0e88%2FSupport%2Fgdbtrace.init%23L2068-L2083&style=default&type=code&showBorder=on&showLineNumbers=on&showFileMeta=on&showFullPath=on&showCopy=on"></script>
+                    </div>
+                </div>
             </div>
-            
+
             <h3>Data Watchpoint and Trace (DWT)</h3>
             We want to configure the DWT to emit both the data value and the program counter every time a register in a DMA channel we care about is modified.
             For my particular instance, I'm using DMA channels 4 and 5. These registers correspond to the address range <code>0x4100_A080..0x4100_A0A0</code>
 
             The DWT is relatively straightforward to configure (at least in comparison to the ETM). 
-            TODO: Show a GDB function that configures the DWT
+            
+             <div x-data="{ tab: 'datasheet' }">
+                <!-- Tab buttons using radio inputs -->
+                <div class="tabs">
+                    <label :class="tab === 'datasheet' && 'enabled'">
+                        <input type="radio" value="datasheet" x-model="tab">
+                        <span>DWT datasheet excerpt</span>
+                    </label>
+                    <label :class="tab === 'gdb' && 'enabled'">
+                        <input type="radio" value="gdb" x-model="tab">
+                        <span>A GDB script to alter them</span>
+                    </label>
+                </div>
+
+                <!-- Tab content -->
+                <div class="tabs-content">
+                    <div x-show="tab === 'datasheet'">
+                        The DWT comparator behavior is configured by their <code>FUNCTION</code> register. 
+                        In our case, we want to emit both data and program counter values on comparator match.
+                        This will help us identify if the access is coming from our DMAC interrupt handler or our application code.
+
+                        <figure>
+                            <a href="https://developer.arm.com/documentation/ddi0403/d/Debug-Architecture/ARMv7-M-Debug/The-Data-Watchpoint-and-Trace-unit/The-DWT-comparators?lang=en#Bcghcbie"><img width="709.98046875px" src="/images/coresight_with_sticks_and_stones/dwt_c1_21.png"/></a>
+                            <figcaption><a href="https://developer.arm.com/documentation/ddi0403/d/Debug-Architecture/ARMv7-M-Debug/The-Data-Watchpoint-and-Trace-unit/The-DWT-comparators?lang=en#Bcghcbie">Table from the ARMv7M reference</a> enumerating different actions a DWT comparator can take</figcaption>
+                        </figure>
+                    </div>
+                    <div x-show="tab === 'gdb'">
+                        <pre class="line-numbers"><code class="language-bash">define dwtSetupDmacTrace
+  # If debugging Rust/other-non-C code, GDB will expect us to use that 
+  # language's syntax to manipulate memory from within the debugger.
+  push_lang c
+  
+  printf "Setting up DWT trace for DMAC channels 4-5 (0x4100A080-0x4100A0A0)\n"
+  
+  # Configure comparator 0 for DMAC range
+  set *($DWT_COMP0) = 0x4100A080
+  # Mask out lower 5 bits of comparator (i.e 32-byte range)
+  set *($DWT_MASK0) = 5
+  # FUNCTION = 0001 (PC trace + data value trace on RW), EMITRANGE = 0, DATAVMATCH = 0
+  set *($DWT_FUNCTION0) = 0b011 | (0 << 5)
+  
+  pop_lang
+end
+</code></pre>
+                    </div>
+                </div>
+            </div>
+            
             
             <h3>Embedded Trace Buffer (ETB)</h3>
             We care about enabling, disabling, and dumping the contents of the ETB.
             If we ignore the trigger (i.e always record every trace packet), the ETB behaves like a ring buffer of trace events.
+            
+            The ETB has an option to enable a formatter. This is important if you are using multiple trace sources with the ETB (e.g both ITM and ETM packets), as the formatter allows demuxing multiple streams.
+            Otherwise, for one stream (as in our case), it merely complicates decoding.
 
-            At least, as per the ROM Table as read out by OpenOCD, the SAM E54 does not appear to implement the CoreSight Trace Funnel (CSTF). 
-            However, both the Trace Port Interface Unit (TPIU) and ETB have formatters that allow disambugiation of multiple trace soures that are sharing the same byte stream.
-            Since we're exclusively using the DWT, we don't have a great reason to enable the formatter.
+            <!-- At least, as per the ROM Table as read out by OpenOCD, the SAM E54 does not appear to implement the CoreSight Trace Funnel (CSTF).  -->
+            <!-- However, both the Trace Port Interface Unit (TPIU) and ETB have formatters that allow disambugiation of multiple trace soures that are sharing the same byte stream. -->
+            <!-- Since we're exclusively using the DWT, we don't have a great reason to enable the formatter. -->
 
-            <script src="https://gist.github.com/ritikmishra/6536fd3ba5a354da823fd5d96b0c404a.js?file=uwu"></script>
+            <!-- <script src="https://gist.github.com/ritikmishra/6536fd3ba5a354da823fd5d96b0c404a.js?file=coresight.gdb"></script> -->
+            <div x-data="{ tab: 'datasheet' }">
+                <!-- Tab buttons using radio inputs -->
+                <div class="tabs">
+                    <label :class="tab === 'fmt' && 'enabled'">
+                        <input type="radio" value="fmt" x-model="tab">
+                        <span>Trace formatter format</span>
+                    </label>
+                    <label :class="tab === 'datasheet' && 'enabled'">
+                        <input type="radio" value="datasheet" x-model="tab">
+                        <span>Programmer's model</span>
+                    </label>
+                    <label :class="tab === 'gdb' && 'enabled'">
+                        <input type="radio" value="gdb" x-model="tab">
+                        <span>GDB script</span>
+                    </label>
+                </div>
+
+                <!-- Tab content -->
+                <div class="tabs-content">
+                    <div x-show="tab == 'fmt'">
+                        From the ETB register description alone, it is unclear what the formatter does.
+                        It took me a while to find this table in the soup of ARM documentation!
+                        <br  />
+                        Specifically, I was having issues with handling formatted data with <a href="https://github.com/rtic-scope/itm"><code>itm-decode</code></a> <i>because formatting is separate from the ITM protocol!</i>
+                        <br  />
+                        <figure>
+                            <a href="https://developer.arm.com/documentation/ihi0029/f/?lang=en"><img width="709.98046875px" src="/images/coresight_with_sticks_and_stones/trace_formatter_format.png" /></a>
+                            <figcaption>Table from the <a href="https://developer.arm.com/documentation/ihi0029/f/?lang=en">CoreSight Architecture Specification</a> (distinct from the Technical Reference Manual!)</figcaption>
+                        </figure>
+                    </div>
+                    <div x-show="tab === 'datasheet'">
+                        As the programmer, we care about the following registers:
+                        <ul>
+                            <li><code>ETB_CTL</code> - enable the ETB</li>
+                            <li><code>ETB_RRD</code> - read the next word from trace RAM</li>
+                            <li><code>ETB_RRP/ETB_RWP</code> - move the read and write pointers around trace RAM (relative to the start)</li>
+                        </ul>
+
+                        When enabled, the ETB will automatically write trace packets into its circular trace RAM, incrementing <code>ETB_RWP</code> by 1 in the process.
+                        In order to read out values, one must disable the ETB and read from <code>ETB_RRD</code>, which increments <code>ETB_RRP</code> by 1.
+                        <br />
+                        <br />
+                        In order to reset the position of the read and write pointers, we can manually write 0 to <code>ETB_RRP</code> and <code>ETB_RWP</code>.
+                    </div>
+                    <div x-show="tab === 'gdb'">
+                        <pre class="line-numbers"><code class="language-bash"># ETB register base addresses for ATSAME54N19A
+set $ETBBASE = 0xE0042000
+set $ETB_RDP = $ETBBASE + 0x004
+set $ETB_RRD = $ETBBASE + 0x010
+set $ETB_RRP = $ETBBASE + 0x014
+set $ETB_RWP = $ETBBASE + 0x018
+set $ETB_TRG = $ETBBASE + 0x01C
+set $ETB_CTL = $ETBBASE + 0x020
+set $ETB_RWD = $ETBBASE + 0x024
+set $ETB_FFSR = $ETBBASE + 0x300
+set $ETB_FFCR = $ETBBASE + 0x304
+set $ETB_LAR = $ETBBASE + 0xFB0
+set $ETB_LSR = $ETBBASE + 0xFB4
+
+# ##############################################
+# ETB individual control functions
+# ##############################################
+
+
+define etbEnable
+  push_lang c
+
+  printf "Enabling ETB trace capture...\n"
+
+  # Unlock ETB
+  set *($ETB_LAR) = 0xC5ACCE55
+
+  # Reset pointers
+  set *($ETB_RWP) = 0
+  set *($ETB_RRP) = 0
+
+  # We're not using triggers, so set to 0 (trace before)
+  set *($ETB_TRG) = 0x0
+ 
+  # Disable formatting
+  set *($ETB_FFCR) = 0b00
+
+  # Enable tracing
+  set *($ETB_CTL) = 1
+  printf "ETB enabled\n"
+
+  pop_lang
+end
+
+define etbDisable
+  push_lang c
+
+  printf "Disabling ETB trace capture...\n"
+  etbUnlock
+  set *($ETB_CTL) = 0
+  printf "ETB disabled\n"
+
+  pop_lang
+end</code></pre>
+                    </div>
+                </div>
+            </div>
+            
 
             <h3>Embedded Trace Macrocell (ETM)</h3>
             For our particular bug, instruction level trace is not necessary to solve it.
@@ -168,9 +465,10 @@
             </pre>
 
             The DMAC ISR is not waiting for the DMA to finish disabling. The application attempts to reenable before the disable finishes.
+            Changing the DMAC ISR to wait for the disable to finish fixes the problem: <a href="https://github.com/atsamd-rs/atsamd/pull/938">https://github.com/atsamd-rs/atsamd/pull/938</a>.
             
         </div>
-
+        <hr  />
         <hr  />
         also read:
         <ul>
@@ -204,8 +502,8 @@
             <li>
                 Tools to assist in your journey
                 <ul>
-                    <li><a href="https://github.com/orbcode/orbuculum">orbuculum</a></li>
-                    <li><a href="https://github.com/rtic-scope/itm"><code>itm-decode</code></a></li>
+                    <li><a href="https://github.com/orbcode/orbuculum">orbuculum</a> is useful to livestream ITM channels over SWO + to posthumously parse ETM packets (although, when I last tried, there were some bugs in their reimplementation of <code>addr2line</code> for mapping decoded instructions to source)</li>
+                    <li><a href="https://github.com/rtic-scope/itm"><code>itm-decode</code></a> is useful for debugging ITM/DWT packets dumped from the ETB.</li>
                 </ul>
             </li>
             <li>
@@ -214,12 +512,10 @@
                     TODO
                 </ul>
             </li>
+            <li><a href="https://www.youtube.com/watch?v=fE2KDzZaxvE">Zebras All the Way Down - Bryan Cantrill, Uptime 2017</a></li>
         </ul>
         <hr  />
         <ul>
-            <li>
-                <a href="https://github.com/ritikmishra/mishra.farm/pull/3">[suggest a correction/make a comment in context]</a> 
-            </li>
             <li>
                 <a href="mailto:ritik.mishra314@gmail.com">[send me an email]</a>
             </li>
@@ -228,8 +524,31 @@
             </li>
         </ul>
         <hr  />
+        <h2>comments</h2>
+        <script src="https://giscus.app/client.js"
+                data-repo="ritikmishra/mishra.farm"
+                data-repo-id="R_kgDOMcACOw"
+                data-category="General"
+                data-category-id="DIC_kwDOMcACO84C0NR4"
+                data-mapping="title"
+                data-strict="0"
+                data-reactions-enabled="1"
+                data-emit-metadata="0"
+                data-input-position="bottom"
+                data-theme="preferred_color_scheme"
+                data-lang="en"
+                crossorigin="anonymous"
+                async>
+        </script>
         
     </article>
+
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/plugins/line-numbers/prism-line-numbers.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/plugins/line-highlight/prism-line-highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/plugins/diff-highlight/prism-diff-highlight.min.js"></script>
 </body>
 
 </html>

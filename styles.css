@@ -37,3 +37,34 @@ figcaption {
     display: flex;
     flex-direction: row;
 }
+
+/* Claude showed me a way to get tab-like behavior out of radio buttons and alpine.js */
+.tabs {
+    margin: 0;
+    border-bottom: 1px solid #ccc;
+}
+.tabs > label {
+    display: inline-block;
+    padding: 8px 16px;
+    cursor: pointer;
+    border: 1px solid #ccc;
+    border-bottom: none;
+    background: white;
+    margin-bottom: -1px;
+}
+.tabs > label > input[type="radio"] {
+    display: none;
+}
+.tabs > label.enabled {
+    font-weight: bold;
+    border-bottom: 1px solid white;
+}
+.tabs > label:not(.enabled) {
+    border-bottom: 1px solid #ccc;
+}
+
+.tabs-content {
+    padding: 16px;
+    border: 1px solid #ccc;
+    border-top: none;
+}
