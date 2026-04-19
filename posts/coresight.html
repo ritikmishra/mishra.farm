@@ -61,8 +61,8 @@
                     <li>An ST-Link debugger</li>
                     <ul>
                         <li>
-                            Strictly speaking, if you're using an Microchip product, it would probably make more sense to use the <a href="https://www.microchip.com/en-us/development-tool/atatmel-ice">ATMEL-ICE</a>, <a href="https://www.microchip.com/en-us/development-tool/PG164100">MPLAB Snap</a>, or another one of their debuggers.
-                            However, although its datasheet claims that the ATMEL-ICE supports SWO, I was unable to get OpenOCD to recognize this*
+                            My default inclination is to use a Microchip debugger wth the Microchip product (e.g like an <a href="https://www.microchip.com/en-us/development-tool/atatmel-ice">ATMEL-ICE</a> or <a href="https://www.microchip.com/en-us/development-tool/PG164100">MPLAB Snap</a>).
+                            The ATMEL-ICE claims that it supports SWO, but I was unable to get OpenOCD to use it, so I switched to the ST-Link (where it definitely works).
                         </li>
                         <li>*not that I ultimately ended up using SWO in the end -- my bursts of trace data were too fast for 2 MHz SWO (the ST-Link driver in OpenOCD refused to run SWO any faster).</li>
                     </ul>
@@ -76,21 +76,52 @@
 
             <h1>my problem</h1>
             <p>
-                I was having an issue where my application code enables two DMA channels to drive a SPI transaction. 
-                <i>Something</i> disables the transmit DMA channel before the transaction is completed. 
+                My application code enables two DMA channels to simultaneously drive the TX and RX halves of a SPI transaction. 
+                <i>Something</i> disables the TX DMA channel before the transaction is completed.
                 The TX DMA is responsible for driving SCLK, so the RX DMA waits indefinitely for bytes to arrive on the bus.
                 It's not immediately obvious how this happens -- by inspection, when the firmware starts the SPI transaction, the RX DMA channel is enabled before the TX DMA channel.
+                From attempting other strategies (namely, RTT logging), I came to understand that this issue was timing-sensitive. 
             </p>
 
+            <h1>a brief word on coresight</h1>
             <p>
-                From attempting other strategies (namely, RTT logging), I came to understand that this issue was timing-sensitive. 
-                Fortunately, we can make the Data Watchpoint and Trace (DWT) peripheral to emit trace events whenever our DMAC registers are accessed <b>without halting the core</b>.
-                These trace packets can be streamed live via parallel trace/SWO, or stored in the ETB and extracted later.
-                They can then be decoded (e.g by <a href="https://github.com/rtic-scope/itm"><code>itm-decode</code></a>).
+                CoreSight is a name for a group of related blocks that can be found in an ARM core.
+
+                <figure>
+                    <a href="https://developer.arm.com/documentation/100166/0001/Functional-Description/About-the-functions"><img style="width:709.98046875px" src="/images/coresight/cm4_block_diagram.png" /></a>
+                    <figcaption>Block diagram from the <a href="https://developer.arm.com/documentation/100166/0001/Functional-Description/About-the-functions">Cortex-M4 TRM</a></figcaption>
+                </figure>
+
+                In summary, the active components from the above block diagram.
+                <ul>
+                    <li>Instrumentation Trace Macrocell (ITM) - emits packets via the tracing sideband</li>
+                    <li>Data Watchpoint and Trace (DWT) - can trigger the ITM to emit packets on memory accesses or other events</li>
+                    <li>Embedded Trace Marcocell (ETM) - allows for instruction-level program tracing</li>
+                    <li>
+                        Trace Port Interface Unit (TPIU) - controls how the above tracing elements emit packets. Packets can be emitted into
+                        <ul>
+                            <li>SWO</li>
+                            <li>parallel trace</li>
+                            <li>the Embedded Trace Buffer (ETB), which is stored in RAM and must be read out after the fact</li>
+                        </ul>
+                    </li>
+
+                </ul>
+
+                All CoreSight components are optional for the microcontroller vendor to implement. 
+                The CoreSight ROM table provides a standardized way to tell which blocks are present on your particular MCU.
+            </p>
+
+
+            
+            <h1>using coresight to solve our problem</h1>
+            
+            <p>
+                My hunch is that someone somehow is disabling the DMA channel after its enabled but before the transaction completes.
+                I want to validate my hunch by using the DWT to trace every access to the DMAC control registers.
+                Although these packets can be streamed live via parallel trace or SWO, I chose to store them in the ETB.
+                Once extracted, the ITM packets emitted by the DWT can be decoded (e.g by <a href="https://github.com/rtic-scope/itm"><code>itm-decode</code></a>).
             </p>           
-
-            <h1>producing trace events</h1>
-
             There are a few things we need to do in order to enable the Cortex-M4 Trace infrastrucure on the SAM MCU
 
             <h2>Enabling the CM4_TRACE clock domain + ETB Trace RAM</h2>
@@ -140,17 +171,17 @@
 
 
 
-            <h2>Configuring ETB/ITM/DWT/ETM</h2>
+            <h2>Configuring CoreSight</h2>
             While you <i>can</i> configure ETB/ITM/DWT/ETM registers from within your firmware, it is much more flexible to configure them through GDB/OpenOCD.
             <br><br>
-            <i>Although, you might want to enable the DWT in your firmware to use its CPU cycle counter!</i>
+            <i>The most obvious reason to enable CoreSight components directly inside firmware is to use DWT CYCCNT to measure the speed of tight loops</i>
 
             <h3>did my mcu vendor freestyle the addresses?</h3>
             You can double check which addresses your ARM CoreSight components are at by checking the CoreSight ROM tables. This is straightforward to do with OpenOCD:
 
-            TODO: collapse!
-
-            <pre class="line-numbers" data-line="27"><code class="language-unknown">(gdb) monitor dap info
+            <details>
+                <summary>The full ROM table of the ATSAME54N19A</summary>
+                <pre class="line-numbers" data-line="27"><code class="language-unknown">(gdb) monitor dap info
 AP # 0x0
                 AP ID register 0x24770011
                 Type is MEM-AP AHB3
@@ -219,14 +250,10 @@ MEM-AP BASE 0x41003003
         ROMTABLE[0x4] = 0x00000000
                 End of ROM table
 (gdb)</code></pre>
+            </details>
             
             <h3>Instrumentation Trace Macrocell (ITM)</h3>
             We need to enable the ITM since our DWT trace packets flow through the it (as per Figure 2-1 from the Cortex®-M4 Processor Technical Reference Manual) on their way out of the microcontroller.
-
-            <figure>
-                <a href="https://developer.arm.com/documentation/100166/0001/Functional-Description/About-the-functions"><img style="width:709.98046875px" src="/images/coresight_with_sticks_and_stones/cm4_block_diagram.png" /></a>
-                <figcaption>Block diagram from the <a href="https://developer.arm.com/documentation/100166/0001/Functional-Description/About-the-functions">Cortex-M4 TRM</a></figcaption>
-            </figure>
 
             <div x-data="{ tab: 'datasheet' }">
                 <!-- Tab buttons using radio inputs -->
@@ -246,7 +273,7 @@ MEM-AP BASE 0x41003003
                     <div x-show="tab === 'datasheet'">
                         Both ITM_TCR.ITMENA and ITM_TCR.TXENA need to be enabled to allow the DWT to emit ITM packets:
                         <figure>
-                            <a href="https://developer.arm.com/documentation/ddi0403/d/Debug-Architecture/ARMv7-M-Debug/The-Instrumentation-Trace-Macrocell/Trace-Control-Register--ITM-TCR?lang=en"><img style="width:709.98046875px" src="/images/coresight_with_sticks_and_stones/itm_tcr.png" /></a>
+                            <a href="https://developer.arm.com/documentation/ddi0403/d/Debug-Architecture/ARMv7-M-Debug/The-Instrumentation-Trace-Macrocell/Trace-Control-Register--ITM-TCR?lang=en"><img style="width:709.98046875px" src="/images/coresight/itm_tcr.png" /></a>
                             <figcaption>from the <a href="https://developer.arm.com/documentation/ddi0403/d/Debug-Architecture/ARMv7-M-Debug/The-Instrumentation-Trace-Macrocell/Trace-Control-Register--ITM-TCR?lang=en">ARMv7-M reference manual</a></figcaption>
                         </figure>
                         Strictly speaking, since the DWT can also just cause a breakpoint, enabling the ITM is not a strict requirement for enabling the DWT.
@@ -287,7 +314,7 @@ MEM-AP BASE 0x41003003
                         This will help us identify if the access is coming from our DMAC interrupt handler or our application code.
 
                         <figure>
-                            <a href="https://developer.arm.com/documentation/ddi0403/d/Debug-Architecture/ARMv7-M-Debug/The-Data-Watchpoint-and-Trace-unit/The-DWT-comparators?lang=en#Bcghcbie"><img width="709.98046875px" src="/images/coresight_with_sticks_and_stones/dwt_c1_21.png"/></a>
+                            <a href="https://developer.arm.com/documentation/ddi0403/d/Debug-Architecture/ARMv7-M-Debug/The-Data-Watchpoint-and-Trace-unit/The-DWT-comparators?lang=en#Bcghcbie"><img width="709.98046875px" src="/images/coresight/dwt_c1_21.png"/></a>
                             <figcaption><a href="https://developer.arm.com/documentation/ddi0403/d/Debug-Architecture/ARMv7-M-Debug/The-Data-Watchpoint-and-Trace-unit/The-DWT-comparators?lang=en#Bcghcbie">Table from the ARMv7M reference</a> enumerating different actions a DWT comparator can take</figcaption>
                         </figure>
                     </div>
@@ -352,7 +379,7 @@ end
                         Specifically, I was having issues with handling formatted data with <a href="https://github.com/rtic-scope/itm"><code>itm-decode</code></a> <i>because formatting is separate from the ITM protocol!</i>
                         <br  />
                         <figure>
-                            <a href="https://developer.arm.com/documentation/ihi0029/f/?lang=en"><img width="709.98046875px" src="/images/coresight_with_sticks_and_stones/trace_formatter_format.png" /></a>
+                            <a href="https://developer.arm.com/documentation/ihi0029/f/?lang=en"><img width="709.98046875px" src="/images/coresight/trace_formatter_format.png" /></a>
                             <figcaption>Table from the <a href="https://developer.arm.com/documentation/ihi0029/f/?lang=en">CoreSight Architecture Specification</a> (distinct from the Technical Reference Manual!)</figcaption>
                         </figure>
                     </div>
@@ -437,6 +464,7 @@ end</code></pre>
             
             <h1>identifying the bug</h1>
 
+            We're going to
             <ul>
                 <li>run firmware</li>
                 <li>dump ETB</li>
@@ -446,28 +474,20 @@ end</code></pre>
             <h2>collecting trace packets</h2>
 
             All we need to do next is 
-
-            TODO: find a not stupid way to format this 
-            <pre>
-                break firmware::__cortex_m_rt_main
-                c
-                etbEnable
-                dwtSetupAll
-                ITMTXEna
-                ITMEna
-                c
-                etbDisable
-                etbDump dwt_trace.bin
-            </pre>
+            <pre class="line-numbers"><code class="language-unknown">break firmware::__cortex_m_rt_main
+c               # Continues until main
+etbEnable
+dwtSetupAll
+ITMTXEna
+ITMEna
+c               # Continue until our firmware hangs, then manually interrupt
+etbDisable
+etbDump dwt_trace.bin</code></pre>
 
             <h2>identifying the problem from the trace</h2>
 
             Once we have the packets, its trivial to decode them 
-
-            TODO: find a not stupid way to format this
-            <pre>
-                $ itm-decode dwt_trace.bin > dwt_trace.txt
-            </pre>
+            <pre class="line-numbers"><code class="language-unknown">$ itm-decode dwt_trace.bin > dwt_trace.txt</code></pre>
             
             Inspecting the last few trace packets reveals the problem
 
