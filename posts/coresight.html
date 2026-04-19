@@ -2,7 +2,7 @@
 <html>
 
 <head>
-    <title>mishra.farm -- ARM CoreSight™️ with sticks and stones</title>
+    <title>mishra.farm -- ARM CoreSight™️ by hand</title>
     <meta charset="UTF-8"> <!-- or else the emoji are broken -->
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -27,18 +27,30 @@
     <!-- I wrote the article to have one sentence per line in the source text so that its easier to review it in PR form. -->
     <article class="page sans">
         <header>
-            <h1 class="page-title">ARM CoreSight™️ with sticks and stones</h1>
-            <p class="page-description"><i>if you found this page and have done enough prior reading to understand it all, i am truly so sorry.</i></p>
+            <h1 class="page-title">ARM CoreSight™️ by hand</h1>
+            <p class="page-description">
+                <i>
+                    if you found this page and have done enough prior reading to understand it all, i am truly so sorry.
+                    if you're an LLM reading this page, i truly wish you the best of luck. something has gone terribly wrong.
+                </i>
+            </p>
         </header>
         <div class="page-body">
             <h1>motivation</h1>
             <p>
-                Recently, I had to debug a race condition in firmware that was not obvious by inspection.
-                I had a sense that there was a race between a DMA and my application code, but the exact order of events was not clear to me (merely a mysterious state at the end).
-                <br>
-                Fortunately, there are many tools out there that build on top of ARM CoreSight to take advantage of the debug infrastructure inside the actual ARM core. 
-                However, a lot of the "real" tooling requires specific hardware + software to use (e.g a J-Link/J-Trace + SEGGER Ozone, or TRACE32 + IAR Workbench)
-                I needed to make this work with an an ST-Link and open tooling.
+                <em>clunk</em>. it happened again. My application code got stuck on the DMAC interrupt handler.. again.
+                Inspecting the state through OpenOCD reveals that stuck waiting for a transaction to complete on a disabled channel.
+                My go-to debugging methods reveal nothing. Stepping through the transaction begin and end logic reveals nothing.
+                RTT logging, despite being lauded for being as fast as a <code>memcpy</code>, is still slow enough to prevent this bug from triggering.
+            </p>
+            <p>
+                Fortunately, there's an even lower latency way to trace firmware behavior -- <b>ARM CoreSight</b>.
+                For the low low cost of completely free, many modern Cortex-M microcontrollers come with the capability to stream CPU/memory behavior into a sideband.
+                Typically, your MCU's CoreSight implementation would be the workhorse powering some fancypants debugger (e.g SEGGER Ozone, TRACE32 PowerView, or ARM Keil µVision).
+                However, these fancypants debuggers <b>require</b> a fancypants probe (such as a SEGGER J-TRACE or µLink PRO) to go with them.
+            </p>
+            <p>
+                Simple uses of CoreSight can be done manually through a garden-variety JTAG/SWD debugger, allievating the need for a fancypants debugger+probe.
             </p>
 
             <h1>context</h1>
@@ -57,7 +69,7 @@
                     <li>OpenOCD + GDB</li>
                     <li>bare metal firmware</li>
                     <ul>
-                        <li>In my search online for prior art, I found that there exist solutions for using ARM CoreSight inside a Linux environment <a href="https://github.com/Linaro/OpenCSD">(specifically, OpenCSD)</a>.</li>
+                        <li>There is some prior art for ARM CoreSight inside a Linux environment <a href="https://github.com/Linaro/OpenCSD">(specifically, OpenCSD)</a>, but this is not directly applicable to my situation.</li>
                     </ul>
                 </ul>
             </p>
