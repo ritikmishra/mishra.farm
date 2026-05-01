@@ -30,8 +30,7 @@
             <h1 class="page-title">ARM CoreSight™️ by hand</h1>
             <p class="page-description">
                 <i>
-                    if you found this page and have done enough prior reading to understand it all, i am truly so sorry.
-                    if you're an LLM reading this page, i truly wish you the best of luck. something has gone terribly wrong.
+                    there is no substitute for understanding.
                 </i>
             </p>
         </header>
@@ -39,15 +38,15 @@
             <h1>motivation</h1>
             <p>
                 <em>clunk</em>. it happened again. My application code got stuck on the DMAC interrupt handler.. again.
-                Inspecting the state through OpenOCD reveals that stuck waiting for a transaction to complete on a disabled channel.
+                Inspecting the state through GDB+OpenOCD reveals that stuck waiting for a transaction to complete on a disabled channel.
                 My go-to debugging methods reveal nothing. Stepping through the transaction begin and end logic reveals nothing.
                 RTT logging, despite being lauded for being as fast as a <code>memcpy</code>, is still slow enough to prevent this bug from triggering.
             </p>
             <p>
                 Fortunately, there's an even lower latency way to trace firmware behavior -- <b>ARM CoreSight</b>.
-                For the low low cost of completely free, many modern Cortex-M microcontrollers come with the capability to stream CPU/memory behavior into a sideband.
+                Many modern Cortex-M microcontrollers come with the capability to stream CPU/memory behavior into a sideband without affecting the core whatsoever.
                 Typically, your MCU's CoreSight implementation would be the workhorse powering some fancypants debugger (e.g SEGGER Ozone, TRACE32 PowerView, or ARM Keil µVision).
-                However, these fancypants debuggers <b>require</b> a fancypants probe (such as a SEGGER J-TRACE or µLink PRO) to go with them.
+                However, these fancypants debuggers require a fancypants probe (such as a SEGGER J-TRACE or µLink PRO) to go with them.
             </p>
             <p>
                 Simple uses of CoreSight can be done manually through a garden-variety JTAG/SWD debugger, allievating the need for a fancypants debugger+probe.
@@ -132,10 +131,16 @@
             <p>firmware side alterations:</p>
             <ul>
                 <li>enable clock domain for CM4 trace infrastructure</li>
+                <ul>
+                    <li>Strictly speaking, this can be done through a debugger; however, I like having it in my firmware to be maximally nice to tooling that is not aware of the particulars of the SAM E5X MCU.</li>
+                </ul>
                 <li>adjust linker script to provide space for ETB + set ETBRAMEN</li>
+                <ul>
+                    <li>For the SAM E54, it is required to re-link your firmware.</li>
+                </ul>
             </ul>
 
-                      <pre class="line-numbers"><code class="language-diff-rust diff-highlight">     // Instantiate peripherals
+            <pre class="line-numbers"><code class="language-diff-rust diff-highlight">     // Instantiate peripherals
      let mut p = atsamd_hal::pac::Peripherals::take().unwrap();
      let (mut buses, clocks, tokens) =
          clock::v2::clock_system_at_reset(p.oscctrl, p.osc32kctrl, p.gclk, p.mclk, &mut p.nvmctrl);
@@ -376,7 +381,7 @@ end
                         From the ETB register description alone, it is unclear what the formatter does.
                         It took me a while to find this table in the soup of ARM documentation!
                         <br  />
-                        Specifically, I was having issues with handling formatted data with <a href="https://github.com/rtic-scope/itm"><code>itm-decode</code></a> <i>because formatting is separate from the ITM protocol!</i>
+                        Specifically, I was having issues with handling formatted data with <a href="https://github.com/rtic-scope/itm"><code>itm-decode</code></a> <i>because formatting wraps the ITM protocol!</i>
                         <br  />
                         <figure>
                             <a href="https://developer.arm.com/documentation/ihi0029/f/?lang=en"><img width="709.98046875px" src="/images/coresight/trace_formatter_format.png" /></a>
@@ -467,29 +472,173 @@ end</code></pre>
             We're going to
             <ul>
                 <li>run firmware</li>
-                <li>dump ETB</li>
+                <li>dump ETB using the GDB snippets we created above</li>
                 <li>parse packets</li>
             </ul>
 
             <h2>collecting trace packets</h2>
 
-            All we need to do next is 
-            <pre class="line-numbers"><code class="language-unknown">break firmware::__cortex_m_rt_main
-c               # Continues until main
-etbEnable
-dwtSetupAll
-ITMTXEna
-ITMEna
-c               # Continue until our firmware hangs, then manually interrupt
-etbDisable
-etbDump dwt_trace.bin</code></pre>
+            All we need to do next is
+            <div x-data="{ tab: 'commands' }">
+                <!-- Tab buttons using radio inputs -->
+                <div class="tabs">
+                    <label :class="tab === 'commands' && 'enabled'">
+                        <input type="radio" value="commands" x-model="tab">
+                        <span>gdb command invocations</span>
+                    </label>
+                    <label :class="tab === 'trace' && 'enabled'">
+                        <input type="radio" value="trace" x-model="tab">
+                        <span>full gdb session</span>
+                    </label>
+                    <label :class="tab === 'script' && 'enabled'">
+                        <input type="radio" value="script" x-model="tab">
+                        <span>gdb script implementing custom coresight commands</span>
+                    </label>
+                </div>
+
+                <!-- Tab content -->
+                <div class="tabs-content">
+                    <div x-show="tab === 'commands'">
+                        <pre class="line-numbers"><code class="language-unknown">(gdb) etbEnable
+(gdb) dwtSetupAll
+(gdb) ITMTXEna 1
+(gdb) ITMEna 1
+(gdb) c
+^C
+(gbb) etbDump itm_packets.bin</code></pre>
+                    </div>
+                    <div x-show="tab === 'trace'">
+                        <pre class="line-numbers" data-line="1,7,30,40,47,54,55,56,58,70"><code class="language-unknown">(gdb) c
+Continuing.
+
+Program received signal SIGTRAP, Trace/breakpoint trap.
+lib::__bkpt () at asm/lib.rs:51
+warning: 51     asm/lib.rs: No such file or directory
+(gdb) bt
+#0  lib::__bkpt () at asm/lib.rs:51
+#1  0x0000130e in cortex_m::asm::bkpt ()
+    at /home/ritikmishra/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cortex-m-0.7.7/src/call_asm.rs:19
+#2  firmware:____embassy_main_task::{async_fn#0} () at firmware/src/main.rs:397
+#3  embassy_executor::raw::TaskStorage<firmware:____embassy_main_task::{async_fn_env#0}>::poll<firmware:____embassy_main_task::{async_fn_env#0}> (p=...)
+    at /home/ritikmishra/.cargo/git/checkouts/embassy-c08a80187403f815/61b7762/embassy-executor/src/raw/mod.rs:220
+#4  0x00013838 in embassy_executor::raw::{impl#9}::poll::{closure#0} (p=...) at src/raw/mod.rs:445
+#5  embassy_executor::raw::run_queue::RunQueue::dequeue_all<embassy_executor::raw::{impl#9}::poll::{closure_env#0}> (self=<optimized out>, on_task=...) at src/raw/run_queue_atomics.rs:85
+#6  embassy_executor::raw::SyncExecutor::poll (self=<optimized out>) at src/raw/mod.rs:438
+#7  embassy_executor::raw::Executor::poll (self=<optimized out>) at src/raw/mod.rs:548
+#8  0x000027c6 in embassy_executor::arch::thread::Executor::run<firmware:__cortex_m_rt_main::{closure_env#0}>
+    (self=0x2001ffe8, init=...)
+    at /home/ritikmishra/.cargo/git/checkouts/embassy-c08a80187403f815/61b7762/embassy-executor/src/arch/cortex_m.rs:105
+#9  0x00002d8e in firmware:__cortex_m_rt_main () at firmware/src/main.rs:72
+warning: (Internal error: pc 0x83b in read in CU, but not in symtab.)
+#10 0x00002d78 in firmware:__cortex_m_rt_main_trampoline () at firmware/src/main.rs:72
+warning: (Internal error: pc 0x83b in read in CU, but not in symtab.)
+warning: (Internal error: pc 0x83c in read in CU, but not in symtab.)
+warning: (Internal error: pc 0x83c in read in CU, but not in symtab.)
+warning: (Internal error: pc 0x800 in read in CU, but not in symtab.)
+warning: (Internal error: pc 0x83b in read in CU, but not in symtab.)
+warning: (Internal error: pc 0x83b in read in CU, but not in symtab.)
+(gdb) etbEnable
+Warning: the current language does not match this frame.
+Enabling ETB trace capture...
+Unlocking ETB...
+ETB Lock Status: 0x00000000
+Resetting ETB read/write pointers...
+Unlocking ETB...
+ETB Lock Status: 0x00000000
+ETB pointers reset
+ETB enabled
+(gdb) etbStatus
+ETB Status: 0x00000000
+ETB Control: 0x00000001
+ETB Formatter/Flush Status: 0x00000000
+ETB Formatter/Flush Control: 0x00000000
+ETB Read Pointer: 0x00000000
+ETB Write Pointer: 0x00000000
+(gdb) dwtSetupAll
+Setting up DWT trace for DMAC and SERCOM2...
+Setting up DWT trace for DMAC channels 4-5 (0x4100A080-0x4100A0A0)
+DWT Comp 0: address=0x4100a080, mask=5, function=0x00000003
+Setting up DWT trace for SERCOM2 flags (0x4101201A)
+DWT Comp 1: address=0x4101201a, mask=0, function=0x00000203
+DWT trace setup complete. Use 'dwtStatus' to verify configuration.
+(gdb) ITMTXEna 1
+(gdb) ITMEna 1
+(gdb) c
+Continuing.
+^C
+Program received signal SIGINT, Interrupt.
+0x000027c8 in embassy_executor::arch::thread::Executor::run<firmware:__cortex_m_rt_main::{closure_env#0}> (
+    self=0x2001ffe8, init=...)
+    at /home/ritikmishra/.cargo/git/checkouts/embassy-c08a80187403f815/61b7762/embassy-executor/src/arch/cortex_m.rs:106
+106                         asm!("wfe");
+^C
+Program received signal SIGINT, Interrupt.
+0x000027c8 in embassy_executor::arch::thread::Executor::run<firmware:__cortex_m_rt_main::{closure_env#0}> (
+    self=0x2001ffe8, init=...)
+    at /home/ritikmishra/.cargo/git/checkouts/embassy-c08a80187403f815/61b7762/embassy-executor/src/arch/cortex_m.rs:106
+106                         asm!("wfe");
+(gdb) etbDump itm_packets.bin
+Disabling ETB trace capture...
+Unlocking ETB...
+ETB Lock Status: 0x00000000
+ETB disabled
+ETB write pointer: 4893 bytes (word index 4893)
+Dumping 32768 bytes (full buffer) starting from index 4894
+Wrote 32768 bytes to itm_packets.bin
+(gdb)</code></pre>
+                    </div>
+                    <div x-show="tab === 'script'">
+                        <pre class="line-numbers"><code class="language-bash" id="gdb-script-content">Loading...</code></pre>
+                    </div>
+                </div>
+            </div>
 
             <h2>identifying the problem from the trace</h2>
 
-            Once we have the packets, its trivial to decode them 
+            Once we have the packets, it merely becomes an exercise in decoding them 
             <pre class="line-numbers"><code class="language-unknown">$ itm-decode dwt_trace.bin > dwt_trace.txt</code></pre>
             
-            Inspecting the last few trace packets reveals the problem
+            Inspecting the trace reveals a problem. A normal DMA sequence looks like this:
+            
+            
+            <pre class="line-numbers"><code class="language-unknown">DataTracePC { comparator: 0, pc: 51484 }
+DataTraceValue { comparator: 0, access_type: Read, value: [2, 8, 32, 0] }
+DataTracePC { comparator: 0, pc: 51498 }
+DataTraceValue { comparator: 0, access_type: Write, value: [2, 8, 32, 0] }
+Overflow
+DataTracePC { comparator: 0, pc: 51532 }
+Overflow
+DataTraceValue { comparator: 0, access_type: Write, value: [0] }
+DataTracePC { comparator: 0, pc: 51556 }
+Overflow
+DataTracePC { comparator: 0, pc: 51564 }
+Overflow
+DataTraceValue { comparator: 0, access_type: Write, value: [0] }
+Overflow
+DataTracePC { comparator: 0, pc: 52786 }
+Overflow
+DataTraceValue { comparator: 0, access_type: Write, value: [0] }
+Overflow
+DataTracePC { comparator: 0, pc: 52818 }
+Overflow
+DataTraceValue { comparator: 0, access_type: Write, value: [0] }
+DataTracePC { comparator: 0, pc: 78638 }
+DataTraceValue { comparator: 0, access_type: Read, value: [2] }
+DataTracePC { comparator: 0, pc: 78660 }
+DataTraceValue { comparator: 0, access_type: Read, value: [3] }
+DataTracePC { comparator: 0, pc: 78668 }
+Overflow
+DataTracePC { comparator: 0, pc: 78676 }
+Overflow
+DataTraceValue { comparator: 0, access_type: Write, value: [0, 0, 32, 0] }
+DataTracePC { comparator: 0, pc: 51484 }
+DataTraceValue { comparator: 0, access_type: Read, value: [0, 0, 32, 0] }
+DataTracePC { comparator: 0, pc: 51498 }
+DataTraceValue { comparator: 0, access_type: Write, value: [2, 0, 32, 0] }
+</code></pre>
+
+
+
 
             TODO: copy paste the trace
             <pre>
@@ -581,6 +730,18 @@ etbDump dwt_trace.bin</code></pre>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/plugins/line-numbers/prism-line-numbers.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/plugins/line-highlight/prism-line-highlight.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/plugins/diff-highlight/prism-diff-highlight.min.js"></script>
+    <script>
+        fetch('/posts/coresight/coresight.gdb')
+            .then(r => r.text())
+            .then(text => {
+                const codeElement = document.getElementById('gdb-script-content');
+                codeElement.textContent = text;
+                Prism.highlightElement(codeElement);
+            })
+            .catch(e => {
+                document.getElementById('gdb-script-content').textContent = 'Error loading coresight.gdb';
+            });
+    </script>
 </body>
 
 </html>
