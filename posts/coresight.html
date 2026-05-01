@@ -63,7 +63,9 @@
             </p>
         </header>
         <div class="page-body">
-            <h1>motivation</h1>
+            <h1 class="hide-from-toc">contents</h1>
+            <nav id="toc"></nav>
+            <h1>introduction</h1>
             <p>
                 Many months ago, I had an issue where I had some firmware get stuck on a race condition in the DMA.
                 Inspecting the state through GDB+OpenOCD reveals that stuck waiting for a transaction to complete on a disabled channel.
@@ -80,7 +82,7 @@
                 Simple uses of CoreSight can be done manually through a garden-variety JTAG/SWD debugger, allievating the need for a fancypants debugger+probe.
             </p>
 
-            <h1>context</h1>
+            <h1>project context</h1>
             <p>
                 in my setup, I am using:
                 <ul>
@@ -141,7 +143,7 @@
 
 
             
-            <h1>using coresight to solve our problem</h1>
+            <h1>strategy</h1>
             
             <p>
                 My hunch is that someone somehow is disabling the DMA channel after its enabled but before the transaction completes.
@@ -872,10 +874,9 @@ Sync
             <li>
                 Similar journeys from others
                 <ul>
-                    TODO
+                    <li>let me know if you have one you like</li>
                 </ul>
             </li>
-            <li><a href="https://www.youtube.com/watch?v=fE2KDzZaxvE">Zebras All the Way Down - Bryan Cantrill, Uptime 2017</a></li>
         </ul>
         <hr  />
         <ul>
@@ -939,6 +940,27 @@ Sync
         }
         window.addEventListener('load', positionTraceNotes);
         window.addEventListener('resize', positionTraceNotes);
+    </script>
+    <script>
+        (function () {
+            var headings = document.querySelectorAll('.page-body h1, .page-body h2');
+            var ul = document.createElement('ul');
+            headings.forEach(function (h) {
+                if (h.classList.contains("hide-from-toc")) {
+                    return;
+                }
+                var slug = h.textContent.trim().toLowerCase().replace(/[^\w]+/g, '-').replace(/^-|-$/g, '');
+                h.id = slug;
+                var li = document.createElement('li');
+                li.style.marginLeft = h.tagName === 'H2' ? '1.5em' : '';
+                var a = document.createElement('a');
+                a.href = '#' + slug;
+                a.textContent = h.textContent.trim();
+                li.appendChild(a);
+                ul.appendChild(li);
+            });
+            document.getElementById('toc').appendChild(ul);
+        })();
     </script>
 </body>
 
