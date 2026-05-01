@@ -21,6 +21,34 @@
 
     <!-- <meta property="og:image" content=" TODO: a thumbnail for the blog post " /> -->
     <!-- <meta property="twitter:image" content=" TODO: a thumbnail for the blog post " /> -->
+
+    <style>
+        .annotated-pre {
+            position: relative;
+        }
+        .annotated-pre pre {
+            padding-right: 35%;
+        }
+        .annotated-pre .notes {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            overflow: visible;
+        }
+        .annotated-pre .note {
+            position: absolute;
+            right: 0.75em;
+            max-width: 30%;
+            font-style: italic;
+            color: #3a3000;
+            font-size: 0.8em;
+            font-family: "IBM Plex Serif", Georgia, serif;
+            line-height: 1.4;
+            padding: 0.5em 0.65em;
+            background: #fef9c3;
+            pointer-events: auto;
+        }
+    </style>
 </head>
 
 <body>
@@ -37,7 +65,7 @@
         <div class="page-body">
             <h1>motivation</h1>
             <p>
-                <em>clunk</em>. it happened again. My application code got stuck on the DMAC interrupt handler.. again.
+                Many months ago, I had an issue where I had some firmware get stuck on a race condition in the DMA.
                 Inspecting the state through GDB+OpenOCD reveals that stuck waiting for a transaction to complete on a disabled channel.
                 My go-to debugging methods reveal nothing. Stepping through the transaction begin and end logic reveals nothing.
                 RTT logging, despite being lauded for being as fast as a <code>memcpy</code>, is still slow enough to prevent this bug from triggering.
@@ -601,11 +629,14 @@ Wrote 32768 bytes to itm_packets.bin
             Inspecting the trace reveals a problem. A normal DMA sequence looks like this:
             
             
-            <pre class="line-numbers"><code class="language-unknown">DataTracePC { comparator: 0, pc: 51484 }
+            <div class="annotated-pre">
+            <pre class="line-numbers"><code class="language-unknown"><span class="anchor" data-note="b1-n1"></span>
+DataTracePC { comparator: 0, pc: 51484 }
 DataTraceValue { comparator: 0, access_type: Read, value: [2, 8, 32, 0] }
 DataTracePC { comparator: 0, pc: 51498 }
 DataTraceValue { comparator: 0, access_type: Write, value: [2, 8, 32, 0] }
-Overflow
+
+Overflow<span class="anchor" data-note="b1-n2"></span>
 DataTracePC { comparator: 0, pc: 51532 }
 Overflow
 DataTraceValue { comparator: 0, access_type: Write, value: [0] }
@@ -622,6 +653,9 @@ Overflow
 DataTracePC { comparator: 0, pc: 52818 }
 Overflow
 DataTraceValue { comparator: 0, access_type: Write, value: [0] }
+
+<span class="anchor" data-note="b1-n3"></span>
+
 DataTracePC { comparator: 0, pc: 78638 }
 DataTraceValue { comparator: 0, access_type: Read, value: [2] }
 DataTracePC { comparator: 0, pc: 78660 }
@@ -630,22 +664,104 @@ DataTracePC { comparator: 0, pc: 78668 }
 Overflow
 DataTracePC { comparator: 0, pc: 78676 }
 Overflow
+<span class="anchor" data-note="b1-n4"></span>
+
 DataTraceValue { comparator: 0, access_type: Write, value: [0, 0, 32, 0] }
 DataTracePC { comparator: 0, pc: 51484 }
 DataTraceValue { comparator: 0, access_type: Read, value: [0, 0, 32, 0] }
 DataTracePC { comparator: 0, pc: 51498 }
+
+<span class="anchor" data-note="b1-n5"></span>
+
 DataTraceValue { comparator: 0, access_type: Write, value: [2, 0, 32, 0] }
 </code></pre>
+            <div class="notes" aria-hidden="true">
+                <div class="note" id="b1-n1">Application code enables the DMA channel</div>
+                <div class="note" id="b1-n2">When the task is spuriously woken, the future checks the completion flags</div>
+                <div class="note" id="b1-n3">The DMA transaction completes and fires the interrupt</div>
+                <div class="note" id="b1-n4">Application code disables the DMA</div>
+                <div class="note" id="b1-n5">Beginnng of next cycle</div>
+            </div>
+            </div>
 
+            The last one -- the one where the condition causing the hang occurs -- looks like this
+            Regrettably, for one reason or another, it seems as if not all of our packets made it through, but, we can roughly tell
+            1. 
 
 
 
             TODO: copy paste the trace
-            <pre>
+            <div class="annotated-pre">
+            <pre class="line-numbers"><code class="language-unknown"><span class="anchor" data-note="b2-n1"></span>
+DataTracePC { comparator: 0, pc: 51498 }
+DataTraceValue { comparator: 0, access_type: Write, value: [2, 8, 32, 0] }
+Overflow
 
-            </pre>
+## spurious wakes....
 
-            The DMAC ISR is not waiting for the DMA to finish disabling. The application attempts to reenable before the disable finishes.
+<span class="anchor" data-note="b2-n2"></span>
+DataTracePC { comparator: 0, pc: 78676 }
+Overflow
+DataTraceValue { comparator: 0, access_type: Write, value: [0, 0, 32, 0] }
+DataTracePC { comparator: 0, pc: 51484 }
+DataTraceValue { comparator: 0, access_type: Read, value: [0, 0, 32, 0] }
+DataTracePC { comparator: 0, pc: 51498 }
+
+<span class="anchor" data-note="b2-n3"></span>
+
+
+DataTraceValue { comparator: 0, access_type: Write, value: [2, 0, 32, 0] }
+Overflow
+DataTracePC { comparator: 0, pc: 51618 }
+DataTracePC { comparator: 0, pc: 51640 }
+Overflow
+DataTraceValue { comparator: 0, access_type: Read, value: [0] }
+Overflow
+DataTracePC { comparator: 0, pc: 52872 }
+DataTracePC { comparator: 0, pc: 52894 }
+Overflow
+DataTraceValue { comparator: 0, access_type: Read, value: [0] }
+DataTracePC { comparator: 1, pc: 55942 }
+DataTraceValue { comparator: 1, access_type: Read, value: [0, 0] }
+DataTracePC { comparator: 0, pc: 53268 }
+DataTraceValue { comparator: 0, access_type: Write, value: [7] }
+DataTracePC { comparator: 0, pc: 53276 }
+<span class="anchor" data-note="b2-n4"></span>
+
+
+DataTraceValue { comparator: 0, access_type: Read, value: [0, 9, 32, 0] }
+Overflow
+DataTracePC { comparator: 0, pc: 53304 }
+Overflow
+DataTracePC { comparator: 0, pc: 53358 }
+Overflow
+DataTraceValue { comparator: 0, access_type: Write, value: [0] }
+Overflow
+DataTracePC { comparator: 0, pc: 53436 }
+Overflow
+DataTracePC { comparator: 0, pc: 53500 }
+Overflow
+<span class="anchor" data-note="b2-n5"></span>
+
+
+DataTraceValue { comparator: 0, access_type: Read, value: [0] }
+DataTracePC { comparator: 0, pc: 78638 }
+DataTraceValue { comparator: 0, access_type: Read, value: [0] }
+DataTracePC { comparator: 0, pc: 78648 }
+DataTraceValue { comparator: 0, access_type: Read, value: [0] }
+Instrumentation { port: 0, payload: [0] }
+Sync
+</code></pre>
+
+            <div class="notes" aria-hidden="true">
+                <div class="note" id="b2-n1">✅ Application code enables the DMA channel</div>
+                <div class="note" id="b2-n2">✅ The DMA transaction completes and the ISR fires and disables the DMA</div>
+                <div class="note" id="b2-n3">✅ The application code comes back around and re-enables the DMA for the next cycle</div>
+                <div class="note" id="b2-n4">⁉️ The application code reads the DMA and finds that its disabled</div>
+                <div class="note" id="b2-n5">❌ Channel interrupt flags are never set, loop hangs forever</div>
+            </div>
+            </div>
+            The DMAC ISR is not waipting for the DMA to finish disabling. The application attempts to reenable before the disable finishes.
             Changing the DMAC ISR to wait for the disable to finish fixes the problem: <a href="https://github.com/atsamd-rs/atsamd/pull/938">https://github.com/atsamd-rs/atsamd/pull/938</a>.
             
         </div>
@@ -726,6 +842,7 @@ DataTraceValue { comparator: 0, access_type: Write, value: [2, 0, 32, 0] }
 
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/plugins/keep-markup/prism-keep-markup.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/plugins/autoloader/prism-autoloader.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/plugins/line-numbers/prism-line-numbers.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/plugins/line-highlight/prism-line-highlight.min.js"></script>
@@ -741,6 +858,21 @@ DataTraceValue { comparator: 0, access_type: Write, value: [2, 0, 32, 0] }
             .catch(e => {
                 document.getElementById('gdb-script-content').textContent = 'Error loading coresight.gdb';
             });
+    </script>
+    <script>
+        function positionTraceNotes() {
+            document.querySelectorAll('.annotated-pre').forEach(function (wrapper) {
+                var wrapperRect = wrapper.getBoundingClientRect();
+                wrapper.querySelectorAll('.anchor').forEach(function (anchor) {
+                    var note = document.getElementById(anchor.dataset.note);
+                    if (!note) return;
+                    var anchorRect = anchor.getBoundingClientRect();
+                    note.style.top = (anchorRect.top - wrapperRect.top) + 'px';
+                });
+            });
+        }
+        window.addEventListener('load', positionTraceNotes);
+        window.addEventListener('resize', positionTraceNotes);
     </script>
 </body>
 
