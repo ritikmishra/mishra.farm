@@ -627,8 +627,21 @@ Wrote 32768 bytes to itm_packets.bin
             <pre class="line-numbers"><code class="language-unknown">$ itm-decode dwt_trace.bin > dwt_trace.txt</code></pre>
             
             Inspecting the trace reveals a problem. A normal DMA sequence looks like this:
-            
-            
+
+
+            <div x-data="{ tab: 'trace' }">
+                <div class="tabs">
+                    <label :class="tab === 'trace' && 'enabled'">
+                        <input type="radio" value="trace" x-model="tab">
+                        <span>trace</span>
+                    </label>
+                    <label :class="tab === 'addr2line' && 'enabled'">
+                        <input type="radio" value="addr2line" x-model="tab">
+                        <span>addr2line</span>
+                    </label>
+                </div>
+                <div class="tabs-content">
+                <div x-show="tab === 'trace'">
             <div class="annotated-pre">
             <pre class="line-numbers"><code class="language-unknown"><span class="anchor" data-note="b1-n1"></span>
 DataTracePC { comparator: 0, pc: 51484 }
@@ -683,14 +696,49 @@ DataTraceValue { comparator: 0, access_type: Write, value: [2, 0, 32, 0] }
                 <div class="note" id="b1-n5">Beginnng of next cycle</div>
             </div>
             </div>
+                </div> <!-- tab === 'trace' -->
+                <div x-show="tab === 'addr2line'">
+                    In the trace, there are roughly two areas of the program that are writing to the DMAC control registers. One is around <code>$pc = 51000</code>, and the other is around <code>$pc = 78000</code>.
+                    The <code>addr2line</code> tool makes it straightforward to determine that the former is from the application code (<code>atsamd_hal::sercom::dma::async_dma::read_dma_linked</code>)
+                    and the latter is from the interrupt handler (<code>atsamd_hal::dmac::async_api::InterruptHandler::on_interrupt</code>).
 
+                    The Rust code gets significantly affected by inlining, so we toss in some extra <code>addr2line</code> flags to clear that up.
+
+                    <pre class="line-numbers"><code class="language-bash">ritikmishra@ritik-laptop:~/__workspace/mishra.farm$ arm-none-eabi-addr2line -Cie firmware.elf -f $(printf '0x%x' 51484)
+core::ptr::read_volatile
+/nix/store/kq9ssklndi7jzqfc5wqshanwjawhml7n-rust-1.86.0/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:1752
+vcell::VolatileCell<T>::get
+/home/ritikmishra/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/vcell-0.1.3/src/lib.rs:33
+atsame54n::generic::Reg<REG>::modify
+/home/ritikmishra/.cargo/git/checkouts/atsamd-72f4d01458ccd226/9e810c5/pac/atsame54n/src/generic.rs:594
+atsamd_hal::dmac::channel::reg::ChctrlaProxy<Id,atsame54n::generic::Reg<atsame54n::dmac::channel::chctrla::ChctrlaSpec>>::modify::{{closure}}
+/home/ritikmishra/.cargo/git/checkouts/atsamd-72f4d01458ccd226/9e810c5/hal/src/dmac/channel/reg.rs:194
+atsamd_hal::dmac::channel::reg::Register::with_chid
+/home/ritikmishra/.cargo/git/checkouts/atsamd-72f4d01458ccd226/9e810c5/hal/src/dmac/channel/reg.rs:104
+atsamd_hal::dmac::channel::reg::ChctrlaProxy<Id,atsame54n::generic::Reg<atsame54n::dmac::channel::chctrla::ChctrlaSpec>>::modify
+/home/ritikmishra/.cargo/git/checkouts/atsamd-72f4d01458ccd226/9e810c5/hal/src/dmac/channel/reg.rs:194
+atsamd_hal::dmac::channel::Channel<Id,S>::enable
+/home/ritikmishra/.cargo/git/checkouts/atsamd-72f4d01458ccd226/9e810c5/hal/src/dmac/channel/mod.rs:278
+<atsamd_hal::dmac::channel::transfer_future::TransferFuture<Id> as core::future::future::Future>::poll
+/home/ritikmishra/.cargo/git/checkouts/atsamd-72f4d01458ccd226/9e810c5/hal/src/dmac/channel/mod.rs:785
+atsamd_hal::dmac::channel::Channel<Id,atsamd_hal::dmac::channel::ReadyFuture>::transfer_future_linked::{{closure}}
+/home/ritikmishra/.cargo/git/checkouts/atsamd-72f4d01458ccd226/9e810c5/hal/src/dmac/channel/mod.rs:726
+atsamd_hal::sercom::dma::async_dma::read_dma_linked::{{closure}}
+/home/ritikmishra/.cargo/git/checkouts/atsamd-72f4d01458ccd226/9e810c5/hal/src/sercom/dma.rs:434
+
+ritikmishra@ritik-laptop:~/__workspace/mishra.farm$ arm-none-eabi-addr2line -Cie firmware.elf -f $(printf '0x%x' 78666)
+<atsamd_hal::dmac::async_api::InterruptHandler as atsamd_hal::async_hal::interrupts::Handler<atsamd_hal::async_hal::interrupts::DMAC>>::on_interrupt
+/home/ritikmishra/.cargo/git/checkouts/atsamd-72f4d01458ccd226/9e810c5/hal/src/dmac/async_api.rs:?</code></pre>
+                </div>
+                </div> <!-- tabs-content -->
+            </div> <!-- x-data tab -->
+
+            <br>
+            <br>
             The last one -- the one where the condition causing the hang occurs -- looks like this
-            Regrettably, for one reason or another, it seems as if not all of our packets made it through, but, we can roughly tell
-            1. 
-
-
-
-            TODO: copy paste the trace
+            
+            <br>
+            <br>
             <div class="annotated-pre">
             <pre class="line-numbers"><code class="language-unknown"><span class="anchor" data-note="b2-n1"></span>
 DataTracePC { comparator: 0, pc: 51498 }
@@ -761,9 +809,27 @@ Sync
                 <div class="note" id="b2-n5">❌ Channel interrupt flags are never set, loop hangs forever</div>
             </div>
             </div>
+
+            <h1>THE FIX</h1>
+
             The DMAC ISR is not waipting for the DMA to finish disabling. The application attempts to reenable before the disable finishes.
-            Changing the DMAC ISR to wait for the disable to finish fixes the problem: <a href="https://github.com/atsamd-rs/atsamd/pull/938">https://github.com/atsamd-rs/atsamd/pull/938</a>.
+            This results in the application waiting forever for an interrupt that will never fire.
+            Changing the DMAC ISR to wait for the disable to finish fixes the problem (<a href="https://github.com/atsamd-rs/atsamd/pull/938">atsamd-rs/atsamd#938</a>):
+            <pre class="line-numbers"><code class="language-diff-rust diff-highlight">   w.enable().clear_bit();
+   w.trigsrc().variant(TriggerSource::Disable)
+ });
+
++ while dmac.channel(channel).chctrla().read().enable().bit_is_set() {
++     core::hint::spin_loop();
++ }
++ 
++ // Prevent the compiler from re-ordering read/write operations beyond this fence.
++ // (see https://docs.rust-embedded.org/embedonomicon/dma.html#compiler-misoptimizations)
++ atomic::fence(atomic::Ordering::Acquire);
+
+  WAKERS[channel].wake();</code></pre>
             
+
         </div>
         <hr  />
         <hr  />
