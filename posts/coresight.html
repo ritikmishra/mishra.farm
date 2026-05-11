@@ -19,8 +19,8 @@
 
     <script src="//unpkg.com/alpinejs" defer></script>
 
-    <meta property="og:image" content="/images/coresight/preview.png" />
-    <meta property="twitter:image" content="/images/coresight/preview.png" />
+    <meta property="og:image" content="https://mishra.farm/images/coresight/preview.png" />
+    <meta property="twitter:image" content="https://mishra.farm/images/coresight/preview.png" />
 
     <style>
         .annotated-pre {
@@ -52,15 +52,10 @@
 </head>
 
 <body>
-    <!-- I wrote the article to have one sentence per line in the source text so that its easier to review it in PR form. -->
+    <!-- For the most part, I wrote the article to have one sentence per line in the source text so that its easier to review it in PR form. -->
     <article class="page sans">
         <header>
             <h1 class="page-title">ARM CoreSight™️ by hand</h1>
-            <p class="page-description">
-                <i>
-                    there is no substitute for understanding.
-                </i>
-            </p>
         </header>
         <div class="page-body">
             <h1 class="hide-from-toc">contents</h1>
@@ -68,9 +63,9 @@
             <h1>introduction</h1>
             <p>
                 Many months ago, I had an issue where I had some firmware get stuck on a race condition in the DMA.
-                Inspecting the state through GDB+OpenOCD reveals that stuck waiting for a transaction to complete on a disabled channel.
-                My go-to debugging methods reveal nothing. Stepping through the transaction begin and end logic reveals nothing.
-                RTT logging, despite being lauded for being as fast as a <code>memcpy</code>, is still slow enough to prevent this bug from triggering.
+                Inspecting the state through GDB+OpenOCD revealed that the DMA was stuck waiting for a transaction to complete on a disabled channel.
+                My go-to debugging methods revealed nothing. Stepping through the transaction begin and end logic reveals nothing.
+                RTT logging, despite being lauded for being as fast as a <code>memcpy</code>, was still slow enough to prevent this bug from triggering.
             </p>
             <p>
                 Fortunately, there's an even lower latency way to trace firmware behavior -- <b>ARM CoreSight</b>.
@@ -112,13 +107,13 @@
                 From attempting other strategies (namely, RTT logging), I came to understand that this issue was timing-sensitive. 
             </p>
 
-            <h1>a brief word on coresight</h1>
+            <h1>a brief note on coresight</h1>
             <p>
                 CoreSight is a name for a group of related blocks that can be found in an ARM core.
 
                 <figure>
                     <a href="https://developer.arm.com/documentation/100166/0001/Functional-Description/About-the-functions"><img style="width:709.98046875px" src="/images/coresight/cm4_block_diagram.png" /></a>
-                    <figcaption>Block diagram from the <a href="https://developer.arm.com/documentation/100166/0001/Functional-Description/About-the-functions">Cortex-M4 TRM</a></figcaption>
+                    <figcaption>Block diagram from the <a href="https://developer.arm.com/documentation/100166/0001/Functional-Description/About-the-functions">Cortex-M4 Technical Reference Manual</a></figcaption>
                 </figure>
 
                 In summary, the active components from the above block diagram.
@@ -138,7 +133,7 @@
                 </ul>
 
                 All CoreSight components are optional for the microcontroller vendor to implement. 
-                The CoreSight ROM table provides a standardized way to tell which blocks are present on your particular MCU.
+                The CoreSight ROM table provides a standardized way for a debugger to find out which blocks are present on your particular MCU.
             </p>
 
 
@@ -146,12 +141,12 @@
             <h1>strategy</h1>
             
             <p>
-                My hunch is that someone somehow is disabling the DMA channel after its enabled but before the transaction completes.
+                My hunch is that something is secretly disabling the DMA channel after its enabled but before the transaction completes.
                 I want to validate my hunch by using the DWT to trace every access to the DMAC control registers.
                 Although these packets can be streamed live via parallel trace or SWO, I chose to store them in the ETB.
                 Once extracted, the ITM packets emitted by the DWT can be decoded (e.g by <a href="https://github.com/rtic-scope/itm"><code>itm-decode</code></a>).
             </p>           
-            There are a few things we need to do in order to enable the Cortex-M4 Trace infrastrucure on the SAM MCU
+            There are a few MCU-specific things we need to do in order to enable the Cortex-M4 Trace infrastrucure on the SAM MCU
 
             <h2>Enabling the CM4_TRACE clock domain + ETB Trace RAM</h2>
 
@@ -198,9 +193,9 @@
                       <pre class="line-numbers"><code class="language-diff-ld diff-highlight"> MEMORY
  {
      FLASH (rx) : ORIGIN = 0x00000000, LENGTH = 0x100000
--    RAM (rwx) : ORIGIN = 0x20000000, LENGTH = 0x20000
+-    RAM (rwx) : ORIGIN = 0x20000000, LENGTH = 0x18000
 +    ETB (rwx) : ORIGIN = 0x20000000, LENGTH = 0x8000
-+    RAM (rwx) : ORIGIN = 0x20008000, LENGTH = 0x18000
++    RAM (rwx) : ORIGIN = 0x20008000, LENGTH = 0x10000
  }
 </code></pre>
 
@@ -212,7 +207,14 @@
             <i>The most obvious reason to enable CoreSight components directly inside firmware is to use DWT CYCCNT to measure the speed of tight loops</i>
 
             <h3>did my mcu vendor freestyle the addresses?</h3>
-            You can double check which addresses your ARM CoreSight components are at by checking the CoreSight ROM tables. This is straightforward to do with OpenOCD:
+
+            The ARM-v7M Architecture Reference manual provides the default address ranges of the CoreSight peripherals: 
+            <figure>
+                <a href="https://developer.arm.com/documentation/ddi0403/d/Debug-Architecture/ARMv7-M-Debug/Introduction-to-ARMv7-M-debug?lang=en#Bcgdhbbc"><img src="/images/coresight/default_rom_table_addrs.png" /></a>
+                <figcaption></figcaption>
+            </figure>
+
+            However, it is ultimately up to the implementation to assign address ranges. You can double check which addresses your ARM CoreSight components are at by checking the CoreSight ROM tables. This is straightforward to do with OpenOCD:
 
             <details>
                 <summary>The full ROM table of the ATSAME54N19A</summary>
@@ -288,7 +290,7 @@ MEM-AP BASE 0x41003003
             </details>
             
             <h3>Instrumentation Trace Macrocell (ITM)</h3>
-            We need to enable the ITM since our DWT trace packets flow through the it (as per Figure 2-1 from the Cortex®-M4 Processor Technical Reference Manual) on their way out of the microcontroller.
+            We need to enable the ITM since our DWT trace packets will flow through it (as per Figure 2-1 from the Cortex®-M4 Processor Technical Reference Manual) on their way out of the microcontroller.
 
             <div x-data="{ tab: 'datasheet' }">
                 <!-- Tab buttons using radio inputs -->
@@ -311,7 +313,7 @@ MEM-AP BASE 0x41003003
                             <a href="https://developer.arm.com/documentation/ddi0403/d/Debug-Architecture/ARMv7-M-Debug/The-Instrumentation-Trace-Macrocell/Trace-Control-Register--ITM-TCR?lang=en"><img style="width:709.98046875px" src="/images/coresight/itm_tcr.png" /></a>
                             <figcaption>from the <a href="https://developer.arm.com/documentation/ddi0403/d/Debug-Architecture/ARMv7-M-Debug/The-Instrumentation-Trace-Macrocell/Trace-Control-Register--ITM-TCR?lang=en">ARMv7-M reference manual</a></figcaption>
                         </figure>
-                        Strictly speaking, since the DWT can also just cause a breakpoint, enabling the ITM is not a strict requirement for enabling the DWT.
+                        Since the DWT can also just cause a breakpoint, enabling the ITM is not a strict requirement for enabling the DWT. However, this is not appropriate for me -- I want to see the sequence of reads/writes that leads to the deadlock.
                     </div>
                     <div x-show="tab === 'orbuculum'">
                         <a href="https://github.com/orbcode/orbuculum/blob/ceec063a595892b1fcb477707ae4778d0b8a0e88/Support/gdbtrace.init#L2068-L2088">Orbuculum</a> comes with a GDB script that defines functions to enable/disable/otherwise interact with the ITM:
@@ -324,7 +326,7 @@ MEM-AP BASE 0x41003003
 
             <h3>Data Watchpoint and Trace (DWT)</h3>
             We want to configure the DWT to emit both the data value and the program counter every time a register in a DMA channel we care about is modified.
-            For my particular instance, I'm using DMA channels 4 and 5. These registers correspond to the address range <code>0x4100_A080..0x4100_A0A0</code>
+            For my particular instance, I'm using DMA channels 4 and 5. The control registers for these channels are in the address range <code>0x4100_A080..0x4100_A0A0</code>
 
             The DWT is relatively straightforward to configure (at least in comparison to the ETM). 
             
@@ -837,7 +839,6 @@ Sync
         <hr  />
         also read:
         <ul>
-            <li><a href="https://ww1.microchip.com/downloads/en/DeviceDoc/SAM_D5xE5x_Family_Data_Sheet_DS60001507F.pdf">SAM D5x/E5x family Datasheet</a></li>
             <li>
                 Official ARM documentation
                 <ul>
@@ -872,11 +873,13 @@ Sync
                 </ul>
             </li>
             <li>
-                Similar journeys from others
+                Coresight on Linux
                 <ul>
-                    <li>let me know if you have one you like</li>
+                    <li><a href="https://github.com/torvalds/linux/blob/5d6919055dec134de3c40167a490f33c74c12581/Documentation/trace/coresight/coresight.rst">description of CoreSight committed into Linux source</a></li>
+                    <li><a href="https://github.com/linaro/opencsd"><code>perf</code> driver for CoreSight</li>
                 </ul>
             </li>
+            <li><a href="https://ww1.microchip.com/downloads/en/DeviceDoc/SAM_D5xE5x_Family_Data_Sheet_DS60001507F.pdf">SAM D5x/E5x family Datasheet</a></li>
         </ul>
         <hr  />
         <ul>
