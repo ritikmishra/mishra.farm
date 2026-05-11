@@ -32,3 +32,71 @@ figcaption {
     font-style: oblique;
     font-size: 0.9em;
 }
+
+.horizontal {
+    display: flex;
+    flex-direction: row;
+}
+
+/* Claude showed me a way to get tab-like behavior out of radio buttons and alpine.js */
+.tabs {
+    margin: 0;
+    border-bottom: 1px solid #ccc;
+}
+.tabs > label {
+    display: inline-block;
+    padding: 8px 16px;
+    cursor: pointer;
+    border: 1px solid #ccc;
+    border-bottom: none;
+    background: white;
+    margin-bottom: -1px;
+}
+.tabs > label > input[type="radio"] {
+    display: none;
+}
+.tabs > label.enabled {
+    font-weight: bold;
+    border-bottom: 1px solid white;
+}
+.tabs > label:not(.enabled) {
+    border-bottom: 1px solid #ccc;
+}
+
+.tabs-content {
+    padding: 16px;
+    border: 1px solid #ccc;
+    border-top: none;
+    overflow-x: auto;
+}
+
+details {
+    margin: 0;
+}
+
+details > summary {
+    display: list-item;
+    padding: 8px 16px;
+    cursor: pointer;
+    border: 1px solid #ccc;
+    background: white;
+    font-weight: bold;
+    user-select: none;
+}
+
+details > summary:hover {
+    background: #f9f9f9;
+}
+
+details[open] > summary {
+    border-bottom: none;
+}
+
+details[open] > *:not(summary) {
+    padding: 16px;
+    border: 1px solid #ccc;
+    border-top: none;
+    overflow-x: auto;
+    display: block;
+    margin: 0;
+}
